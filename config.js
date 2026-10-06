@@ -5,7 +5,7 @@
 export const CONFIG = {
   brandLabel: "MISSION ROOM / CINE",
   ariaLabel:
-    "A darkened theatre with three large projection screens in a shallow curve. A presenter marks a schedule change on the left screen, and the station model and performance screens update across the room.",
+    "A darkened theatre with three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room.",
   statusLine: "RESCHEDULED · 3 SUCCESSORS UPDATED · FORECAST REVISED",
   quietLine: "BASELINE HELD · CRITICAL PATH CLEAR",
 
@@ -83,7 +83,6 @@ export const CONFIG = {
     nominalPanelHeight: 1.7,
     plinthHeight: 0.8,
     wingAngleDeg: 35,
-    presenterDistance: 0.6,
     fasciaHeight: 0.07,
     plinthDepth: 0.32,
     fogDensity: 0.011,
@@ -94,6 +93,8 @@ export const CONFIG = {
     bloomStrength: 0.14,
     bloomRadius: 0.35,
     bloomThreshold: 0.96,
+    beamOpacity: 0.11,
+    lensBoost: 3.2,
   },
 
   screen: {
@@ -135,15 +136,20 @@ export const CONFIG = {
   },
 
   camera: {
-    driftPeriod: 24,
-    parallaxDeg: 1.5,
-    desktop: { position: [0.55, 1.76, 9.35], look: [0.45, 1.22, 0.08], fov: 38, yawDeg: 4, dolly: 0.42 },
-    tablet: { position: [-0.15, 1.78, 6.7], look: [-0.2, 1.38, 0.25], fov: 36, yawDeg: 3, dolly: 0.28 },
-    phone: { position: [-1.15, 1.62, 4.35], look: [-1.25, 1.42, 0.45], fov: 34, yawDeg: 1.6, dolly: 0.16 },
+    // View direction is fixed; distance and framing are solved every frame so
+    // the setup fills whatever box the scene is given (see fitCamera).
+    direction: [-0.1, -0.54, -9.27],
+    fov: 32,
+    yawDeg: 4,
+    margin: { x: 0.035, y: 0.07 },
+    // Narrower than this, the camera frames one screen at a time and pans
+    // with the story instead of shrinking the whole room to fit.
+    panBelowAspect: 1.5,
+    marginPan: { x: 0.03, y: 0.05 },
   },
 
   figures: {
-    presenter: { height: 1.78, standU: 0.64 },
+    presenter: { height: 1.78, outset: 0.55, forward: 0.9 },
   },
 
   quality: {
@@ -153,10 +159,10 @@ export const CONFIG = {
     slowWindowMs: 2000,
     warmupMs: 3000,
     tiers: [
-      { id: "high", bloom: true, beams: true, dprCap: 2, modelFps: 30 },
-      { id: "no-bloom", bloom: false, beams: true, dprCap: 2, modelFps: 30 },
-      { id: "no-atmosphere", bloom: false, beams: false, dprCap: 2, modelFps: 20 },
-      { id: "dpr1", bloom: false, beams: false, dprCap: 1, modelFps: 15 },
+      { id: "high", bloom: true, motes: true, dprCap: 2, modelFps: 30 },
+      { id: "no-bloom", bloom: false, motes: true, dprCap: 2, modelFps: 30 },
+      { id: "no-atmosphere", bloom: false, motes: false, dprCap: 2, modelFps: 20 },
+      { id: "dpr1", bloom: false, motes: false, dprCap: 1, modelFps: 15 },
     ],
   },
 };

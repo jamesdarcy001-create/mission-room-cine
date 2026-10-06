@@ -461,12 +461,15 @@ function createWorld(stage, coarse) {
   function addArchitecture(group, mesh) {
     const plinth = new THREE.Mesh(trackG(new THREE.BoxGeometry(panelW, CONFIG.room.plinthHeight, CONFIG.room.plinthDepth)), plinthMat);
     const fascia = new THREE.Mesh(trackG(new THREE.BoxGeometry(panelW, CONFIG.room.fasciaHeight, 0.14)), plinthMat);
-    const mount = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.28, 0.06, 0.42)), mountMat);
-    const stem = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.04, 0.28, 0.04)), mountMat);
+    const mount = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.36, 0.15, 0.42)), mountMat);
+    const stem = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.04, 0.6, 0.04)), mountMat);
     scene.add(plinth, fascia, mount, stem);
     group.userData.arch = { plinth, fascia, mount, stem, mesh };
   }
 
+  // Projection beams: a soft pyramid from each lens to its screen's corners.
+  // `along` runs 0 at the lens to 1 at the screen; `side` runs 0..1 across a face
+  // so the pyramid's hard edges fade out.
   const beamMat = trackM(new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -476,17 +479,50 @@ function createWorld(stage, coarse) {
       uOpacity: { value: 0 },
       uColor: { value: new THREE.Color(CONFIG.color.sand200) },
     },
-    vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
-    fragmentShader: "varying vec2 vUv; uniform float uOpacity; uniform vec3 uColor; void main(){ float axial = smoothstep(0.0, 0.12, vUv.y) * smoothstep(1.0, 0.45, vUv.y); gl_FragColor = vec4(uColor, axial * uOpacity); }",
+    vertexShader: [
+      "attribute float along; attribute float side;",
+      "varying float vAlong; varying float vSide; varying vec3 vNormal; varying vec3 vView;",
+      "void main(){",
+      "  vAlong = along; vSide = side;",
+      "  vec4 mv = modelViewMatrix * vec4(position, 1.0);",
+      "  vView = normalize(-mv.xyz); vNormal = normalize(normalMatrix * normal);",
+      "  gl_Position = projectionMatrix * mv;",
+      "}",
+    ].join("\n"),
+    fragmentShader: [
+      "varying float vAlong; varying float vSide; varying vec3 vNormal; varying vec3 vView;",
+      "uniform float uOpacity; uniform vec3 uColor;",
+      "void main(){",
+      "  float facing = pow(abs(dot(vNormal, vView)), 0.8);",
+      "  float edges = sin(3.14159 * clamp(vSide, 0.0, 1.0));",
+      "  float falloff = mix(1.0, 0.18, pow(vAlong, 0.7)) * smoothstep(0.0, 0.025, vAlong);",
+      "  gl_FragColor = vec4(uColor, facing * edges * falloff * uOpacity);",
+      "}",
+    ].join("\n"),
   }));
   const beams = [];
-  const beamGeo = trackG(new THREE.CylinderGeometry(0.42, 0.035, 1, 16, 1, true));
-  [screens.left, screens.centre, screens.right].forEach((entry) => {
-    const mesh = new THREE.Mesh(beamGeo, beamMat);
+  [screens.left, screens.centre, screens.right].forEach(() => {
+    const mesh = new THREE.Mesh(trackG(new THREE.BufferGeometry()), beamMat);
     mesh.frustumCulled = false;
     scene.add(mesh);
     beams.push(mesh);
   });
+
+  // Projector lenses and their glow. Bright enough to cross the bloom threshold.
+  const lensMat = trackM(new THREE.MeshBasicMaterial({ color: CONFIG.color.sand200, toneMapped: false }));
+  const glowTex = trackT(new THREE.CanvasTexture(glowCanvas()));
+  glowTex.colorSpace = THREE.SRGBColorSpace;
+  const glowMat = trackM(new THREE.SpriteMaterial({
+    map: glowTex,
+    color: CONFIG.color.sand200,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    opacity: 0,
+  }));
+  const lensGeo = trackG(new THREE.CylinderGeometry(0.055, 0.065, 0.05, 24));
+  const glows = [];
 
   const moteCount = 42;
   const motePositions = new Float32Array(moteCount * 3);
@@ -507,7 +543,7 @@ function createWorld(stage, coarse) {
     beam: i % 3,
     along: Math.random(),
     ang: Math.random() * Math.PI * 2,
-    rad: 0.05 + Math.random() * 0.28,
+    rad: 0.1 + Math.random() * 0.7,
     phase: Math.random(),
   }));
 
@@ -519,12 +555,21 @@ function createWorld(stage, coarse) {
     depthWrite: false,
     toneMapped: false,
   }));
-  const figureMat = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite750,
-    roughness: 0.62,
+  const clothMat = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite600,
+    emissive: CONFIG.color.graphite800,
+    emissiveIntensity: 0.35,
+    roughness: 0.78,
     metalness: 0,
   }));
-  const presenter = buildFigure(CONFIG.figures.presenter.height, figureMat, trackG);
+  const skinMat = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite500,
+    emissive: CONFIG.color.graphite800,
+    emissiveIntensity: 0.35,
+    roughness: 0.6,
+    metalness: 0,
+  }));
+  const presenter = buildPerson(CONFIG.figures.presenter.height, clothMat, skinMat, trackG);
   scene.add(presenter.root);
   const shadow = new THREE.Mesh(trackG(new THREE.CircleGeometry(0.28, 16)), shadowMat);
   shadow.rotation.x = -Math.PI / 2;
@@ -583,15 +628,29 @@ function createWorld(stage, coarse) {
       arch.mount.position.y = CONFIG.room.plinthHeight + panelH + 0.78;
       arch.mount.lookAt(center);
       arch.stem.position.copy(arch.mount.position);
-      arch.stem.position.y -= 0.16;
-      const start = arch.mount.position.clone();
-      const end = center.clone().addScaledVector(normal, 0.15);
-      const delta = end.clone().sub(start);
-      const len = delta.length();
-      beams[index].scale.set(1, len, 1);
-      beams[index].position.copy(start).addScaledVector(delta, 0.5);
-      beams[index].quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
-      beams[index].userData = { start, dir: delta.clone(), len };
+      arch.stem.position.y += 0.37;
+      arch.mount.updateMatrixWorld(true);
+
+      const lens = new THREE.Mesh(lensGeo, lensMat);
+      lens.rotation.x = Math.PI / 2;
+      lens.position.z = 0.215;
+      arch.mount.add(lens);
+      const start = arch.mount.localToWorld(new THREE.Vector3(0, 0, 0.25));
+      const glow = new THREE.Sprite(glowMat);
+      glow.position.copy(start);
+      glow.scale.setScalar(0.85);
+      scene.add(glow);
+      glows.push(glow);
+
+      const inset = 0.015;
+      const corners = [[inset, inset], [1 - inset, inset], [1 - inset, 1 - inset], [inset, 1 - inset]]
+        .map(([u, v]) => screenPoint(mesh, u, v, 0.03, new THREE.Vector3()));
+      beams[index].geometry.dispose();
+      beams[index].geometry = trackG(beamGeometry(start, corners));
+      const end = screenPoint(mesh, 0.5, 0.5, 0.03, new THREE.Vector3());
+      const dir = end.clone().sub(start);
+      const len = dir.length();
+      beams[index].userData = { start, dir: dir.normalize(), len };
     });
   }
 
@@ -625,7 +684,30 @@ function createWorld(stage, coarse) {
   }
 
   placeArchitecture();
-  placePresenter(presenter, screens.left.mesh);
+  placePerson(presenter, screens.left.mesh);
+  updateMatrices();
+
+  // World-space points the camera must keep in frame. The stems are left out
+  // on purpose: they run up out of shot as if hung from the ceiling.
+  const boxPoints = (object) => {
+    const box = new THREE.Box3().setFromObject(object);
+    const out = [];
+    [box.min.x, box.max.x].forEach((x) => [box.min.y, box.max.y].forEach((y) => [box.min.z, box.max.z].forEach((z) => {
+      out.push(new THREE.Vector3(x, y, z));
+    })));
+    return out;
+  };
+  const screenFit = (entry) => {
+    const arch = entry.group.userData.arch;
+    return [entry.mesh, arch.plinth, arch.fascia, arch.mount].flatMap(boxPoints);
+  };
+  const personFit = boxPoints(presenter.root);
+  const fitSets = {
+    left: [...screenFit(screens.left), ...personFit],
+    centre: screenFit(screens.centre),
+    right: screenFit(screens.right),
+  };
+  fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right];
 
   const clockVectors = {
     tip: new THREE.Vector3(),
@@ -649,6 +731,13 @@ function createWorld(stage, coarse) {
     mote: new THREE.Vector3(),
     tangent: new THREE.Vector3(),
     bitangent: new THREE.Vector3(),
+    lens: new THREE.Color(),
+    fitA: new THREE.Vector3(),
+    fitB: new THREE.Vector3(),
+    fitC: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    forward: new THREE.Vector3(),
   };
 
   return {
@@ -664,6 +753,10 @@ function createWorld(stage, coarse) {
     frames,
     beams,
     beamMat,
+    lensMat,
+    glows,
+    glowMat,
+    fitSets,
     motes,
     motePositions,
     moteSeeds,
@@ -695,15 +788,16 @@ function screenPoint(mesh, u, v, z, out) {
   return out;
 }
 
-function placePresenter(figure, mesh) {
-  const point = screenPoint(mesh, CONFIG.figures.presenter.standU, 0.42, 0, new THREE.Vector3());
+// The person is there for scale only: just outside the left wing's outer edge,
+// clear of the screens from the camera's side, turned to watch the room.
+function placePerson(figure, mesh) {
+  const edge = screenPoint(mesh, 0, 0, 0, new THREE.Vector3());
+  const along = screenPoint(mesh, 1, 0, 0, new THREE.Vector3()).sub(edge).normalize();
   const normal = new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld);
-  figure.root.position.set(
-    point.x + normal.x * CONFIG.room.presenterDistance,
-    0,
-    point.z + normal.z * CONFIG.room.presenterDistance,
-  );
-  figure.root.lookAt(0.35, 0, 8);
+  const { outset, forward } = CONFIG.figures.presenter;
+  figure.root.position.copy(edge).addScaledVector(along, -outset).addScaledVector(normal, forward);
+  figure.root.position.y = 0;
+  figure.root.lookAt(0, 0, 0.6);
 }
 
 function updateFrames(world, story) {
@@ -728,12 +822,19 @@ function updateFrames(world, story) {
 
 function updateBeams(world, story) {
   const tier = world.tier || CONFIG.quality.tiers[0];
-  const opacity = tier.beams ? 0.02 * story.power * story.bg : 0;
+  const on = story.power * Math.max(story.bg, 0.35 * story.power);
+  // Beams are a few additive triangles, so they stay on at every tier; only the motes drop.
+  const opacity = CONFIG.room.beamOpacity * on;
   world.beamMat.uniforms.uOpacity.value = opacity;
+  world.lensMat.color.set(CONFIG.color.graphite700).lerp(world.tmp.lens.set(CONFIG.color.sand200).multiplyScalar(CONFIG.room.lensBoost), on);
+  world.glowMat.opacity = on;
+  world.glows.forEach((glow) => {
+    glow.visible = on > 0.01;
+  });
   world.beams.forEach((beam) => {
     beam.visible = opacity > 0.001;
   });
-  world.motes.visible = opacity > 0.001;
+  world.motes.visible = tier.motes && opacity > 0.001;
   if (!world.motes.visible) return;
   const attr = world.motes.geometry.attributes.position;
   world.moteSeeds.forEach((seed, i) => {
@@ -744,7 +845,7 @@ function updateBeams(world, story) {
     world.tmp.mote.copy(data.start).addScaledVector(data.dir, along * data.len);
     world.tmp.tangent.crossVectors(Math.abs(data.dir.y) > 0.85 ? AXIS_X : UP, data.dir).normalize();
     world.tmp.bitangent.crossVectors(data.dir, world.tmp.tangent);
-    const radius = seed.rad * (0.15 + along * 0.85);
+    const radius = seed.rad * along;
     world.tmp.mote.addScaledVector(world.tmp.tangent, Math.cos(seed.ang) * radius);
     world.tmp.mote.addScaledVector(world.tmp.bitangent, Math.sin(seed.ang) * radius);
     attr.setXYZ(i, world.tmp.mote.x, world.tmp.mote.y, world.tmp.mote.z);
@@ -809,29 +910,67 @@ function placePulse(world, mesh, along, v) {
   mesh.position.copy(world.tmp.hit);
 }
 
+// Place the camera so a set of world points fills the frame exactly, minus a
+// margin, for a fixed view direction. Solved per axis: for points in camera
+// basis (x, y, depth z), the nearest camera that keeps |x - cx| <= t (z - cz)
+// for every point is cz = (A + B) / 2, cx = t (B - A) / 2, where
+// A = min(z - x / t) and B = min(z + x / t).
+function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp) {
+  tmp.right.crossVectors(forward, UP).normalize();
+  tmp.up.crossVectors(tmp.right, forward).normalize();
+  const tV = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * (1 - margin.y);
+  const tH = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * aspect * (1 - margin.x);
+  let ax = Infinity;
+  let bx = Infinity;
+  let ay = Infinity;
+  let by = Infinity;
+  points.forEach((p) => {
+    const x = p.dot(tmp.right);
+    const y = p.dot(tmp.up);
+    const z = p.dot(forward);
+    ax = Math.min(ax, z - x / tH);
+    bx = Math.min(bx, z + x / tH);
+    ay = Math.min(ay, z - y / tV);
+    by = Math.min(by, z + y / tV);
+  });
+  const cz = Math.min((ax + bx) / 2, (ay + by) / 2);
+  const cx = (tH * (bx - ax)) / 2;
+  const cy = (tV * (by - ay)) / 2;
+  return out.copy(tmp.right).multiplyScalar(cx).addScaledVector(tmp.up, cy).addScaledVector(forward, cz);
+}
+
+// Which screen the narrow (pan) framing follows: 0 left, 1 centre, 2 right.
+// Opens on the centre screen as the model builds, moves to the left screen for
+// the edit, then follows the pulse across to the right screen.
+function panFocus(t) {
+  const toLeft = ease.sine(Math.min(1, Math.max(0, (t - 3.6) / 1.4)));
+  const across = ease.sine(Math.min(1, Math.max(0, (t - 7.75) / 1.5)));
+  return 1 - toLeft + 2 * across;
+}
+
 function updateCamera(world, story) {
-  const rig = world.view.portrait
-    ? CONFIG.camera.phone
-    : world.view.cssW < 1024
-      ? CONFIG.camera.tablet
-      : CONFIG.camera.desktop;
+  const cam = CONFIG.camera;
+  const { aspect } = world.view;
   const u = THREE.MathUtils.clamp(story.t / CONFIG.storyEnd, 0, 1);
-  const yaw = (u - 0.5) * THREE.MathUtils.degToRad(rig.yawDeg);
-  const pitch = 0;
-  const dolly = (u - 0.5) * rig.dolly;
-  world.tmp.look.set(rig.look[0], rig.look[1], rig.look[2]);
-  world.tmp.offset.set(rig.position[0] - rig.look[0], 0, rig.position[2] - rig.look[2]);
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  const x = world.tmp.offset.x * cos - world.tmp.offset.z * sin;
-  const z = world.tmp.offset.x * sin + world.tmp.offset.z * cos;
-  world.tmp.camPos.set(rig.look[0] + x, rig.position[1] + pitch, rig.look[2] + z);
-  world.tmp.dir = world.tmp.hit.copy(world.tmp.camPos).sub(world.tmp.look).normalize();
-  world.tmp.camPos.addScaledVector(world.tmp.hit, dolly);
+  const yaw = (u - 0.5) * THREE.MathUtils.degToRad(cam.yawDeg);
+  const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2])
+    .normalize()
+    .applyAxisAngle(UP, yaw);
+  const margin = aspect < cam.panBelowAspect ? cam.marginPan : cam.margin;
+  if (aspect < cam.panBelowAspect) {
+    const focus = panFocus(story.t);
+    const lo = Math.min(1, Math.floor(focus));
+    const sets = [world.fitSets.left, world.fitSets.centre, world.fitSets.right];
+    fitCamera(sets[lo], forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
+    fitCamera(sets[lo + 1], forward, cam.fov, aspect, margin, world.tmp.fitB, world.tmp);
+    world.tmp.camPos.lerpVectors(world.tmp.fitA, world.tmp.fitB, focus - lo);
+  } else {
+    fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp);
+  }
   world.camera.position.copy(world.tmp.camPos);
-  world.camera.lookAt(world.tmp.look);
-  if (world.camera.fov !== rig.fov) {
-    world.camera.fov = rig.fov;
+  world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
+  if (world.camera.fov !== cam.fov) {
+    world.camera.fov = cam.fov;
     world.camera.updateProjectionMatrix();
   }
 }
@@ -853,51 +992,76 @@ function applyTier(world, index, coarse) {
   world.tier = tier;
   if (world.bloom) world.bloom.enabled = tier.bloom;
   world.floor.visible = true;
-  world.beams.forEach((beam) => {
-    beam.visible = tier.beams;
-  });
-  world.motes.visible = tier.beams;
+  world.motes.visible = tier.motes;
   void coarse;
 }
 
-function buildFigure(height, material, trackG) {
+// A standing adult built from rounded primitives, proportioned for a 1.78 m
+// figure and scaled to `height`. Faces +Z, feet on y = 0.
+function buildPerson(height, cloth, skin, trackG) {
   const s = height / 1.78;
-  const pts = [
-    [-0.1, 0],
-    [0.1, 0],
-    [0.11, 0.78],
-    [0.18, 1.12],
-    [0.22, 1.32],
-    [0.36, 1.5],
-    [0.32, 1.64],
-    [0.16, 1.48],
-    [0.13, 1.4],
-    [0.12, 1.52],
-    [0.14, 1.68],
-    [0.04, 1.78],
-    [-0.08, 1.76],
-    [-0.13, 1.62],
-    [-0.11, 1.48],
-    [-0.18, 1.22],
-    [-0.13, 0.95],
-    [-0.11, 0.72],
-  ];
-  const shape = new THREE.Shape();
-  shape.moveTo(pts[0][0] * s, pts[0][1] * s);
-  for (let i = 1; i < pts.length; i += 1) shape.lineTo(pts[i][0] * s, pts[i][1] * s);
-  shape.closePath();
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.26 * s,
-    bevelEnabled: true,
-    bevelThickness: 0.05 * s,
-    bevelSize: 0.045 * s,
-    bevelSegments: 2,
-    curveSegments: 2,
-  });
-  geo.translate(0, 0, -0.13 * s);
   const root = new THREE.Group();
-  root.add(new THREE.Mesh(trackG(geo), material));
+  const body = new THREE.Group();
+  body.scale.setScalar(s);
+  root.add(body);
+  const add = (geo, material, [x, y, z], { rx = 0, rz = 0, scale } = {}) => {
+    const mesh = new THREE.Mesh(trackG(geo), material);
+    mesh.position.set(x, y, z);
+    mesh.rotation.set(rx, 0, rz);
+    if (scale) mesh.scale.set(scale[0], scale[1], scale[2]);
+    body.add(mesh);
+    return mesh;
+  };
+  const capsule = (radius, length) => new THREE.CapsuleGeometry(radius, length, 6, 14);
+
+  [-1, 1].forEach((side) => {
+    add(capsule(0.05, 0.16), cloth, [side * 0.1, 0.05, 0.05], { rx: Math.PI / 2, scale: [1.1, 1, 0.75] });
+    add(capsule(0.062, 0.34), cloth, [side * 0.1, 0.3, 0], { rz: side * 0.02 });
+    add(capsule(0.075, 0.34), cloth, [side * 0.1, 0.7, 0], { rz: side * -0.02 });
+    add(capsule(0.052, 0.22), cloth, [side * 0.235, 1.3, 0], { rz: side * 0.09 });
+    add(capsule(0.044, 0.22), cloth, [side * 0.255, 1.03, 0.025], { rx: -0.14, rz: side * 0.03 });
+    add(new THREE.SphereGeometry(0.048, 14, 10), skin, [side * 0.258, 0.85, 0.05], { scale: [0.8, 1.2, 1] });
+  });
+  add(capsule(0.13, 0.14), cloth, [0, 0.93, 0], { rz: Math.PI / 2, scale: [1, 1, 0.7] });
+  add(capsule(0.17, 0.3), cloth, [0, 1.2, 0], { scale: [1.12, 1, 0.62] });
+  add(new THREE.CylinderGeometry(0.048, 0.056, 0.12, 14), skin, [0, 1.52, 0.005]);
+  add(new THREE.SphereGeometry(0.1, 24, 18), skin, [0, 1.665, 0.01], { scale: [0.88, 1.13, 1] });
   return { root, height };
+}
+
+// Four soft faces from the lens (apex) to the screen corners.
+function beamGeometry(apex, corners) {
+  const position = [];
+  const along = [];
+  const side = [];
+  for (let i = 0; i < 4; i += 1) {
+    const a = corners[i];
+    const b = corners[(i + 1) % 4];
+    position.push(apex.x, apex.y, apex.z, a.x, a.y, a.z, b.x, b.y, b.z);
+    along.push(0, 1, 1);
+    side.push(0.5, 0, 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute("along", new THREE.Float32BufferAttribute(along, 1));
+  geo.setAttribute("side", new THREE.Float32BufferAttribute(side, 1));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function glowCanvas() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.12, "rgba(255,255,255,0.7)");
+  gradient.addColorStop(0.35, "rgba(255,255,255,0.16)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+  return canvas;
 }
 
 function buildModel(trackG, trackM) {
