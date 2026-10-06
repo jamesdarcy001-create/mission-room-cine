@@ -1,0 +1,8 @@
+.vercel
+.env
+.env.*
+node_modules
+_hero.png
+_left.png
+_mid.png
+_right.png
