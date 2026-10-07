@@ -36,20 +36,6 @@ export const CONFIG = {
     accent: "#e5484d",
     accentSoft: "rgba(229,72,77,0.18)",
     ivory60: "rgba(250,249,245,0.60)",
-    // Audience: low-poly site workers (hard hats, hi-vis, workwear, skin, hair).
-    workerHat: "#f0b21c",
-    workerVest: "#f0661e",
-    workerReflect: "#ecdf3c",
-    workerNavy: "#27375a",
-    workerTee: "#e6e6e3",
-    workerSky: "#c9dcee",
-    workerOveralls: "#d98559",
-    workerSkinLight: "#efc6a4",
-    workerSkinMid: "#d49a72",
-    workerSkinDark: "#8b5a3c",
-    workerHairDark: "#2b221d",
-    workerHairBrown: "#5c3b27",
-    workerHairRed: "#a7322a",
   },
 
   font: {
@@ -181,30 +167,22 @@ export const CONFIG = {
   },
 
   figures: {
-    // Five seated site workers seen from behind, on the near side of a table,
-    // facing the screens. Upper bodies only: each fades out below the shoulders.
-    // Distances are metres in front of the centre screen (z) and above the
-    // floor (y). They sit in the dark band under the screens and are checked
-    // not to overlap any screen (see ?debug).
+    // Five site workers seen from behind, facing the screens: a photographic
+    // cut-out (assets/workers.webp, background removed, fading to transparent
+    // at the bottom and sides) on a flat card that faces the still camera.
+    // Placed on the near side of the table, with the hard-hat tops in the dark
+    // band under the screens (checked not to overlap any screen; see ?debug).
     audience: {
-      count: 5,
-      spacing: 0.7,
-      // Gap between the table's near edge and each person's back.
-      seatGap: 0.3,
-      // Figure base height; hard-hat top is about base + 0.79.
-      baseY: 0.36,
-      // World heights: fully transparent at `from`, solid at `to`.
-      fade: { from: 0.39, to: 0.66 },
-      // Self-lit share of each colour, so the backs read against the dark room.
-      glow: 0.42,
-      // Left to right. Colours are CONFIG.color keys.
-      workers: [
-        { shirt: "workerNavy", skin: "workerSkinLight", hair: "workerHairDark", overalls: "workerOveralls" },
-        { shirt: "workerTee", skin: "workerSkinMid", hair: "workerHairBrown", vest: true, shortSleeves: true },
-        { shirt: "workerNavy", skin: "workerSkinLight", hair: "workerHairRed", vest: true, longHair: true },
-        { shirt: "workerSky", skin: "workerSkinDark", hair: "workerHairDark", shortSleeves: true },
-        { shirt: "workerNavy", skin: "workerSkinMid", hair: "workerHairBrown", vest: true, shortSleeves: true },
-      ],
+      image: "assets/workers.webp",
+      // Width : height of the image, so the card is sized before it loads.
+      aspect: 1774 / 571,
+      // Card width in metres, height of its top edge (hat tops) and its
+      // distance in front of the centre screen.
+      width: 3.6,
+      top: 1.07,
+      z: 4.72,
+      // A touch under full brightness so the photo sits in the dim room.
+      brightness: 0.88,
     },
     table: {
       z: 3.9,
