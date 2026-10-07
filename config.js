@@ -159,8 +159,9 @@ export const CONFIG = {
       forward: 0.22,
       // Lowering the model's A-pose arms, in the file's centimetres (see lowerArms).
       arms: { pivotX: 20, pivotZ: 37, dropDeg: 42, blendFrom: 15, blendTo: 26 },
-      shoulders: { squeeze: 0.32, core: 10, rampFrom: 0, rampTo: 28, neckFrom: 47, neckTo: 53 },
-      head: { centre: [0, 12, 65], radii: [8.6, 10.6, 14], from: 48, to: 54 },
+      forearms: { elbowX: 25, elbowY: 17, elbowZ: 8, blend: 9, backDeg: 13, inDeg: 7 },
+      shoulders: { squeeze: 0.32, core: 10, armX: 25, rampFrom: 0, rampTo: 28, neckFrom: 47, neckTo: 53 },
+      head: { centre: [0, 12, 63.6], radii: [7.3, 9, 11.8], from: 47, to: 52 },
     },
   },
 

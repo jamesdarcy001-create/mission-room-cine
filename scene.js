@@ -1053,7 +1053,7 @@ function createPerson(height, trackG, trackM) {
       if (!node.isMesh) return;
       node.material.dispose?.();
       node.material = body;
-      node.geometry = smoothPerson(smoothHead(narrowShoulders(lowerArms(node.geometry))));
+      node.geometry = smoothPerson(smoothHead(narrowShoulders(straightenForearms(lowerArms(node.geometry)))));
       person.loaded.push(node.geometry);
     });
     const upright = new THREE.Group();
@@ -1081,16 +1081,15 @@ function createPerson(height, trackG, trackM) {
 // x across the body, feet near z = -103, head top near z = 78.
 function lowerArms(geometry) {
   const { pivotX, pivotZ, dropDeg, blendFrom, blendTo } = CONFIG.figures.presenter.arms;
-  const smooth = (a, b, v) => {
-    const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
-    return t * t * (3 - 2 * t);
-  };
   const pos = geometry.attributes.position;
+  // How much each vertex belongs to an arm (0 body, 1 arm). Later steps reuse it.
+  const arm = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i += 1) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
     const side = Math.sign(x);
-    const w = smooth(blendFrom, blendTo, Math.abs(x)) * smooth(-26, -20, z);
+    const w = smoothstep(blendFrom, blendTo, Math.abs(x)) * smoothstep(-26, -20, z);
+    arm[i] = w;
     if (w <= 0) continue;
     const angle = -side * THREE.MathUtils.degToRad(dropDeg) * w;
     const dx = x - side * pivotX;
@@ -1099,6 +1098,7 @@ function lowerArms(geometry) {
     const s = Math.sin(angle);
     pos.setXYZ(i, side * pivotX + dx * c - dz * s, pos.getY(i), pivotZ + dx * s + dz * c);
   }
+  geometry.userData.arm = arm;
   pos.needsUpdate = true;
   return geometry;
 }
@@ -1108,24 +1108,61 @@ function smoothstep(a, b, v) {
   return t * t * (3 - 2 * t);
 }
 
-// Narrower shoulders: pull everything more than `core` cm from the centre line
-// inward by `squeeze`, across the shoulder band only, so the torso core, neck
-// and hands keep their shape and the band fades out with no kink.
-function narrowShoulders(geometry) {
-  const { squeeze, core, rampFrom, rampTo, neckFrom, neckTo } = CONFIG.figures.presenter.shoulders;
+// Straight forearms. The model's elbows are bent: the forearm swings forward
+// and the hand flares out. Rotate everything below the elbow back into line
+// with the upper arm, about the elbow, easing in over `blend` cm so the elbow
+// bends smoothly rather than creasing.
+function straightenForearms(geometry) {
+  const { elbowX, elbowY, elbowZ, blend, backDeg, inDeg } = CONFIG.figures.presenter.forearms;
   const pos = geometry.attributes.position;
+  const arm = geometry.userData.arm;
   for (let i = 0; i < pos.count; i += 1) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const w = smoothstep(rampFrom, rampTo, z) * (1 - smoothstep(neckFrom, neckTo, z));
-    const reach = Math.abs(x) - core;
-    if (w <= 0 || reach <= 0) continue;
-    pos.setX(i, x - Math.sign(x) * reach * squeeze * w);
+    const t = arm[i] * smoothstep(elbowZ, elbowZ - blend, pos.getZ(i));
+    if (t <= 0) continue;
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+    const side = Math.sign(x);
+    const ex = side * elbowX;
+    // Inward, in the frontal plane.
+    const a1 = -side * THREE.MathUtils.degToRad(inDeg) * t;
+    let dx = x - ex;
+    let dz = z - elbowZ;
+    x = ex + dx * Math.cos(a1) - dz * Math.sin(a1);
+    z = elbowZ + dx * Math.sin(a1) + dz * Math.cos(a1);
+    // Back, in the side plane (front of the body is low y in this file).
+    const a2 = THREE.MathUtils.degToRad(backDeg) * t;
+    const dy = y - elbowY;
+    dz = z - elbowZ;
+    y = elbowY + dy * Math.cos(a2) - dz * Math.sin(a2);
+    z = elbowZ + dy * Math.sin(a2) + dz * Math.cos(a2);
+    pos.setXYZ(i, x, y, z);
   }
   pos.needsUpdate = true;
   return geometry;
 }
 
+// Narrower shoulders: pull everything more than `core` cm from the centre line
+// inward by `squeeze`, across the shoulder band only, so the torso core and
+// neck keep their shape and the band fades out with no kink. Arms move in as a
+// whole by the same amount the shoulder does, so they stay straight.
+function narrowShoulders(geometry) {
+  const { squeeze, core, armX, rampFrom, rampTo, neckFrom, neckTo } = CONFIG.figures.presenter.shoulders;
+  const pos = geometry.attributes.position;
+  const arm = geometry.userData.arm;
+  const armShift = (armX - core) * squeeze;
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const w = smoothstep(rampFrom, rampTo, z) * (1 - smoothstep(neckFrom, neckTo, z));
+    const band = Math.max(0, Math.abs(x) - core) * squeeze * w;
+    const shift = arm[i] * armShift + (1 - arm[i]) * band;
+    if (shift <= 0) continue;
+    pos.setX(i, x - Math.sign(x) * shift);
+  }
+  pos.needsUpdate = true;
+  return geometry;
+}
 // A smooth, featureless head. The model's own head has eye sockets and a mouth
 // cavity; pressing those onto a surface leaves folded triangles. So the head's
 // triangles are dropped and a clean ellipsoid of the same size takes their
@@ -1138,9 +1175,10 @@ function smoothHead(geometry) {
   for (let i = 0; i < pos.count; i += 1) above[i] = pos.getZ(i) >= to ? 1 : 0;
   for (let i = 0; i < pos.count; i += 1) {
     const z = pos.getZ(i);
-    const w = smoothstep(from, to, z);
-    if (w <= 0) continue;
     const x = pos.getX(i);
+    // Neck-width only, so the tops of the shoulders are never pulled up.
+    const w = smoothstep(from, to, z) * (1 - smoothstep(9, 13, Math.abs(x)));
+    if (w <= 0) continue;
     const y = pos.getY(i);
     const dx = (x - centre[0]) / radii[0];
     const dy = (y - centre[1]) / radii[1];
