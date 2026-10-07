@@ -1,8 +1,11 @@
 import { CONFIG } from "./config.js";
 import { activityShift, barInterval, popScale, scramble } from "./story.js";
 
+// Layout is authored at W x H; the canvases are that size times RES, and every
+// paint runs under a RES scale transform. Fewer pixels to draw and upload.
 const W = CONFIG.screen.pxWidth;
 const H = CONFIG.screen.pxHeight;
+const RES = CONFIG.screen.resolution;
 const C = CONFIG.color;
 const F = CONFIG.font;
 
@@ -276,67 +279,147 @@ function drawGantt(ctx, story, baseline) {
   ctx.fillText("CALENDAR  5-DAY", W - LAYOUT.pad, H - 56);
 }
 
-function seriesPoint(kind, x, edited) {
-  const planned = 1 / (1 + Math.exp(-9.5 * (x - 0.48)));
-  if (kind === "planned") return planned;
-  const date = CONFIG.schedule.dataDate;
-  if (kind === "actual") {
-    if (x >= date) return 1 / (1 + Math.exp(-9.5 * (date - 0.48)));
-    return planned * 0.98;
-  }
-  const end = edited > 0.5 ? 1 : 0.9 - edited * 0.08;
-  if (x <= date) return 1 / (1 + Math.exp(-9.5 * (date - 0.48))) * 0.98;
-  const u = (x - date) / (end - date);
-  const startY = 1 / (1 + Math.exp(-9.5 * (date - 0.48))) * 0.98;
-  return startY + (1 - startY) * (u * u * (3 - 2 * u));
+// Cumulative progress (0..1) across the 16-week chart (x 0..1).
+// Planned: the baseline S-curve, finishing at `plan.finish`.
+// Actual: tracks a touch behind plan, and stops at the data date (today).
+// Forecast: picks up from actual at today and runs the rest of plan's shape,
+// stretched to the forecast finish. The schedule edit slips that finish by
+// `editWeeks`, so the red line bends later: that bend is the slip.
+function sCurve(u) {
+  const k = (v) => 1 / (1 + Math.exp(-10 * (v - 0.5)));
+  const c = Math.min(1, Math.max(0, u));
+  return (k(c) - k(0)) / (k(1) - k(0));
+}
+
+function forecastFinish(slip) {
+  return CONFIG.schedule.planFinish + slip * (CONFIG.schedule.editWeeks / CONFIG.schedule.weeks);
+}
+
+function seriesPoint(kind, x, slip) {
+  const plan = CONFIG.schedule.planFinish;
+  const today = CONFIG.schedule.dataDate;
+  if (kind === "planned") return sCurve(x / plan);
+  const actualAtToday = sCurve(today / plan) * 0.96;
+  if (kind === "actual") return sCurve(x / plan) * 0.96;
+  const finish = forecastFinish(slip);
+  const from = sCurve(today / plan);
+  const u = (x - today) / (finish - today);
+  const rest = (sCurve(today / plan + u * (1 - today / plan)) - from) / (1 - from);
+  return actualAtToday + (1 - actualAtToday) * rest;
 }
 
 function drawCurve(ctx, story, baseline) {
   const x = 96;
   const y = 250;
-  const w = 1180;
+  const w = W - 192;
   const h = 520;
-  const edited = baseline ? 0 : story.shift;
+  const slip = baseline ? 0 : story.resequence;
   ctx.fillStyle = C.white04;
   ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = C.graphite700;
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
 
+  const left = x + 64;
+  const right = x + w - 46;
+  const bottom = y + h - 48;
+  const top = y + 70;
+  const px = (u) => left + u * (right - left);
+  const py = (v) => bottom - v * (bottom - top);
+
   ctx.strokeStyle = C.graphite700;
   ctx.beginPath();
-  ctx.moveTo(x + 64, y + 36);
-  ctx.lineTo(x + 64, y + h - 48);
-  ctx.lineTo(x + w - 36, y + h - 48);
+  ctx.moveTo(left, y + 36);
+  ctx.lineTo(left, bottom);
+  ctx.lineTo(x + w - 36, bottom);
   ctx.stroke();
 
-  const plot = (kind, color, width, dash, reveal) => {
+  const today = CONFIG.schedule.dataDate;
+  const plan = CONFIG.schedule.planFinish;
+  const finish = forecastFinish(slip);
+  const reveal = baseline ? 1 : story.curveDraw;
+  const forecastReveal = baseline ? 1 : story.forecastReveal;
+
+  // Today: where actual stops and forecast takes over.
+  ctx.save();
+  ctx.globalAlpha = reveal;
+  ctx.strokeStyle = C.graphite500;
+  ctx.setLineDash([6, 8]);
+  ctx.beginPath();
+  ctx.moveTo(px(today), top - 20);
+  ctx.lineTo(px(today), bottom);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  setFont(ctx, FONT.monoStrong, C.graphite400);
+  ctx.textAlign = "center";
+  ctx.fillText("TODAY", px(today), bottom + 34);
+  ctx.restore();
+
+  const plot = (kind, color, width, dash, from, to) => {
+    if (to <= from) return;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(x + 64, y + 24, w - 100, h - 72);
-    ctx.clip();
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.setLineDash(dash);
     ctx.beginPath();
-    const steps = 48;
-    const n = Math.max(2, Math.round(reveal * steps));
-    for (let i = 0; i <= n; i += 1) {
-      const u = i / steps;
-      const px = x + 64 + u * (w - 110);
-      const py = y + h - 48 - seriesPoint(kind, u, edited) * (h - 110);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    const steps = 120;
+    for (let i = 0; i <= steps; i += 1) {
+      const u = from + (to - from) * (i / steps);
+      const sx = px(u);
+      const sy = py(seriesPoint(kind, u, slip));
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
     ctx.restore();
   };
 
-  const reveal = baseline ? 1 : story.curveDraw;
-  const forecastReveal = baseline ? 1 : story.forecastReveal;
-  plot("planned", C.ivory, 4, [], reveal);
-  plot("actual", C.sand300, 4, [], reveal);
-  plot("forecast", C.accent, 4, [14, 10], forecastReveal);
+  plot("planned", C.ivory, 5, [], 0, plan * reveal);
+  plot("actual", C.sand300, 7, [], 0, today * reveal);
+  plot("forecast", C.accent, 7, [20, 12], today, today + (finish - today) * forecastReveal);
+
+  // Finish markers on the time axis: plan in ivory, forecast in red. Once the
+  // edit lands they split, and the bracket between them reads the slip.
+  const tick = (u, color, label, alpha) => {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(px(u), py(1) - 6);
+    ctx.lineTo(px(u), bottom + 10);
+    ctx.stroke();
+    setFont(ctx, FONT.monoStrong, color);
+    ctx.textAlign = "center";
+    ctx.fillText(label, px(u), bottom + 34);
+    ctx.restore();
+  };
+  tick(plan, C.ivory, "PLAN", reveal);
+  tick(finish, C.accent, "FORECAST", forecastReveal * Math.min(1, slip * 3));
+
+  if (slip > 0.02) {
+    const days = Math.round(slip * CONFIG.schedule.editWeeks * 7);
+    const y0 = py(1) - 26;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, slip * 2);
+    ctx.strokeStyle = C.accent;
+    ctx.fillStyle = C.accentSoft;
+    ctx.fillRect(px(plan), py(1) - 6, px(finish) - px(plan), bottom - py(1) + 6);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(px(plan), y0 + 8);
+    ctx.lineTo(px(plan), y0);
+    ctx.lineTo(px(finish), y0);
+    ctx.lineTo(px(finish), y0 + 8);
+    ctx.stroke();
+    setFont(ctx, FONT.eyebrow, C.accent);
+    ctx.textAlign = "right";
+    ctx.fillText(`+${days} DAYS`, px(finish), y0 - 14);
+    ctx.restore();
+  }
 
   const legend = [
     ["PLANNED", C.ivory],
@@ -353,7 +436,6 @@ function drawCurve(ctx, story, baseline) {
     ctx.fillText(item[0], lx + 40, ly);
   });
 }
-
 function glyphRows(ch) {
   const raw = FONT5[ch] || FONT5[" "];
   const rows = [];
@@ -515,8 +597,8 @@ function drawStatus(ctx, story, baseline) {
 export function createSurfaces() {
   const make = (alpha) => {
     const canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
+    canvas.width = Math.round(W * RES);
+    canvas.height = Math.round(H * RES);
     const ctx = canvas.getContext("2d", { alpha, desynchronized: true });
     ctx.lineJoin = "miter";
     ctx.lineCap = "butt";
@@ -593,8 +675,8 @@ function paintOverlay(ctx, story, baseline) {
 function scratchFor(surface) {
   if (!surface.scratch) {
     surface.scratch = document.createElement("canvas");
-    surface.scratch.width = W;
-    surface.scratch.height = H;
+    surface.scratch.width = Math.round(W * RES);
+    surface.scratch.height = Math.round(H * RES);
   }
   return surface.scratch;
 }
@@ -608,6 +690,7 @@ export function paintSurfaces(surfaces, story, only) {
     ["overlay", surfaces.overlay, paintOverlay],
   ].filter(([name]) => !only || only.includes(name));
   jobs.forEach(([, surface, painter]) => {
+    surface.ctx.setTransform(RES, 0, 0, RES, 0, 0);
     if (blend >= 0.985) {
       painter(surface.ctx, story, true);
       return;
@@ -616,8 +699,10 @@ export function paintSurfaces(surfaces, story, only) {
     if (blend > 0.02) {
       const scratch = scratchFor(surface);
       const sctx = scratch.getContext("2d");
+      sctx.setTransform(RES, 0, 0, RES, 0, 0);
       painter(sctx, story, true);
       surface.ctx.save();
+      surface.ctx.setTransform(1, 0, 0, 1, 0, 0);
       surface.ctx.globalAlpha = blend;
       surface.ctx.drawImage(scratch, 0, 0);
       surface.ctx.restore();
@@ -657,6 +742,7 @@ export function surfaceKeys(story) {
       f(story.spiRoll),
       f(story.dateRoll),
       f(story.status),
+      f(story.resequence),
     ].join("|"),
     overlay: [...shared, f(story.resequence)].join("|"),
   };

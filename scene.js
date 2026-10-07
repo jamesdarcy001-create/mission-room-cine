@@ -186,7 +186,7 @@ async function boot(ui) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     world.time += dt;
-    if (!POSTER_MODE && !reduce) elapsed += dt;
+    if (!POSTER_MODE && !reduce) elapsed += dt * CONFIG.speed;
     const clock = storyClock(elapsed);
     t = clock.t;
     sampleStory(t, t, story);

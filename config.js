@@ -78,7 +78,9 @@ export const CONFIG = {
   storyEnd: 12,
   // Auto-play loop (story seconds): after the first full play and a `hold` on
   // the confirmed state, fade back over `fade` and replay from `from`.
-  loop: { from: 5.0, hold: 2.6, fade: 1.4 },
+  loop: { from: 5.0, hold: 2.2, fade: 1.1 },
+  // Playback speed of the story (1 = authored timing).
+  speed: 1.45,
   posterTime: 6.4,
 
   room: {
@@ -106,12 +108,16 @@ export const CONFIG = {
     modelTargetWidth: 1280,
     modelTargetHeight: 720,
     maxFps: 60,
+    // Canvas pixel scale for the screen images (layout stays at pxWidth).
+    resolution: 0.75,
   },
 
   schedule: {
     weeks: 16,
     editWeeks: 2,
     dataDate: 0.42,
+    // Baseline finish on the forecast chart (fraction of the 16-week axis).
+    planFinish: 0.78,
     activities: [
       { code: "A1010", name: "SITE ESTABLISHMENT", start: 0.02, dur: 0.1, crit: false },
       { code: "A1020", name: "PILING", start: 0.1, dur: 0.16, crit: false },
@@ -145,8 +151,8 @@ export const CONFIG = {
     fov: 32,
     yawDeg: 3,
     swayPeriod: 22,
-    margin: { x: 0.035, y: 0.07 },
-    pushIn: 0.05,
+    margin: { x: 0.012, y: 0.03 },
+    pushIn: 0.03,
   },
 
   figures: {
