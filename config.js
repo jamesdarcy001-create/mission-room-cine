@@ -153,7 +153,7 @@ export const CONFIG = {
 
   figures: {
     // outset: metres beyond the left screen's outer edge; forward: metres in front of its face.
-    presenter: { height: 1.78, outset: 0.42, forward: 0.22 },
+    presenter: { height: 1.78, outset: 0.8, forward: 0.22 },
   },
 
   quality: {

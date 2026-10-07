@@ -5,13 +5,13 @@ import { RenderPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/R
 import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
-import { GLTFLoader } from "https://esm.sh/three@0.186.1/addons/loaders/GLTFLoader.js";
+import { TDSLoader } from "https://esm.sh/three@0.186.1/addons/loaders/TDSLoader.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
 
 const POSTER_URL = new URL("./poster.webp", import.meta.url).href;
-const PERSON_URL = new URL("./models/xbot.glb", import.meta.url).href;
+const PERSON_URL = new URL("./models/lowpolyman.3ds", import.meta.url).href;
 const params = new URLSearchParams(window.location.search);
 const POSTER_MODE = params.has("poster");
 const DEBUG_MODE = params.has("debug");
@@ -192,7 +192,6 @@ async function boot(ui) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     world.time += dt;
-    if (world.presenter.mixer && !reduce) world.presenter.mixer.update(dt);
     if (!POSTER_MODE) {
       // Progress runs while the stage is pinned: from the track's top reaching
       // the pin's sticky offset until the track's bottom releases the pin. On
@@ -1024,14 +1023,15 @@ function applyTier(world, index, coarse) {
   void coarse;
 }
 
-// The scale figure: the Xbot mannequin from the three.js examples (Mixamo rig),
-// recoloured to the room's graphite and playing its idle loop. It loads after
-// the scene is up. Until then an invisible proxy of the same size keeps the
-// camera fit stable, so the frame does not jump when the model arrives.
+// The scale figure: a low-poly man (models/lowpolyman.3ds). The file is
+// Z-up in centimetres, so it is stood upright, its feet put on the floor and
+// it is scaled to `height`, then recoloured to the room's graphite. It loads
+// after the scene is up; until then an invisible proxy of the same size keeps
+// the camera fit stable, so the frame does not jump when it arrives.
 // Faces +Z, feet on y = 0.
 function createPerson(height, trackG, trackM) {
   const root = new THREE.Group();
-  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.62, height, 0.34)), trackM(new THREE.MeshBasicMaterial()));
+  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(1.4, height, 0.36)), trackM(new THREE.MeshBasicMaterial()));
   proxy.position.y = height / 2;
   proxy.visible = false;
   root.add(proxy);
@@ -1039,41 +1039,39 @@ function createPerson(height, trackG, trackM) {
     color: CONFIG.color.graphite500,
     emissive: CONFIG.color.graphite800,
     emissiveIntensity: 0.3,
-    roughness: 0.55,
+    roughness: 0.6,
     metalness: 0.05,
+    flatShading: true,
   }));
-  const joints = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite750,
-    roughness: 0.45,
-    metalness: 0.2,
-  }));
-  const person = { root, height, mixer: null, loaded: [] };
+  const person = { root, height, loaded: [] };
   person.dispose = () => {
     person.loaded.forEach((geo) => geo.dispose());
-    person.mixer?.stopAllAction();
   };
-  new GLTFLoader().load(PERSON_URL, (gltf) => {
-    const model = gltf.scene;
+  new TDSLoader().load(PERSON_URL, (model) => {
     model.traverse((node) => {
       if (!node.isMesh) return;
-      node.material = node.material.name.includes("Joints") ? joints : body;
-      node.frustumCulled = false;
+      node.material.dispose?.();
+      node.material = body;
       person.loaded.push(node.geometry);
     });
-    const box = new THREE.Box3().setFromObject(model);
-    model.scale.multiplyScalar(height / Math.max(0.01, box.max.y - box.min.y));
-    root.add(model);
-    const idle = gltf.animations.find((clip) => clip.name === "idle");
-    if (idle) {
-      person.mixer = new THREE.AnimationMixer(model);
-      person.mixer.clipAction(idle).play();
-      person.mixer.update(0);
-    }
+    const upright = new THREE.Group();
+    model.rotation.x = -Math.PI / 2;
+    upright.add(model);
+    const box = new THREE.Box3().setFromObject(upright);
+    const scale = height / Math.max(0.01, box.max.y - box.min.y);
+    upright.scale.setScalar(scale);
+    upright.position.set(
+      -((box.min.x + box.max.x) / 2) * scale,
+      -box.min.y * scale,
+      -((box.min.z + box.max.z) / 2) * scale,
+    );
+    root.add(upright);
   }, undefined, (error) => {
     console.warn("Mission Room CINE: person model did not load.", error);
   });
   return person;
 }
+
 // Four soft faces from the lens (apex) to the screen corners.
 function beamGeometry(apex, corners) {
   const position = [];
