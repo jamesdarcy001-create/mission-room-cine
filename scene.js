@@ -6,6 +6,7 @@ import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocess
 import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
 import { TDSLoader } from "https://esm.sh/three@0.186.1/addons/loaders/TDSLoader.js";
+import { mergeVertices } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
@@ -1025,23 +1026,23 @@ function applyTier(world, index, coarse) {
 
 // The scale figure: a low-poly man (models/lowpolyman.3ds). The file is
 // Z-up in centimetres, so it is stood upright, its feet put on the floor and
-// it is scaled to `height`, then recoloured to the room's graphite. It loads
+// it is scaled to `height`, arms lowered and recoloured to the room's graphite. It loads
 // after the scene is up; until then an invisible proxy of the same size keeps
 // the camera fit stable, so the frame does not jump when it arrives.
 // Faces +Z, feet on y = 0.
 function createPerson(height, trackG, trackM) {
   const root = new THREE.Group();
-  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(1.4, height, 0.36)), trackM(new THREE.MeshBasicMaterial()));
+  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.6, height, 0.36)), trackM(new THREE.MeshBasicMaterial()));
   proxy.position.y = height / 2;
   proxy.visible = false;
   root.add(proxy);
+  // Dark so it sits back in the room: it is there for scale, not attention.
   const body = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite500,
-    emissive: CONFIG.color.graphite800,
-    emissiveIntensity: 0.3,
-    roughness: 0.6,
+    color: CONFIG.color.graphite800,
+    emissive: CONFIG.color.graphite900,
+    emissiveIntensity: 0.25,
+    roughness: 0.7,
     metalness: 0.05,
-    flatShading: true,
   }));
   const person = { root, height, loaded: [] };
   person.dispose = () => {
@@ -1052,6 +1053,7 @@ function createPerson(height, trackG, trackM) {
       if (!node.isMesh) return;
       node.material.dispose?.();
       node.material = body;
+      node.geometry = smoothPerson(lowerArms(node.geometry));
       person.loaded.push(node.geometry);
     });
     const upright = new THREE.Group();
@@ -1070,6 +1072,47 @@ function createPerson(height, trackG, trackM) {
     console.warn("Mission Room CINE: person model did not load.", error);
   });
   return person;
+}
+
+// The supplied man is a single unrigged mesh in an A-pose. Bring the arms down
+// to his sides by rotating arm vertices about each shoulder in the frontal
+// plane. The rotation fades in across the shoulder (and is held off the legs)
+// so the mesh bends there instead of tearing. File units: centimetres, Z-up,
+// x across the body, feet near z = -103, head top near z = 78.
+function lowerArms(geometry) {
+  const { pivotX, pivotZ, dropDeg, blendFrom, blendTo } = CONFIG.figures.presenter.arms;
+  const smooth = (a, b, v) => {
+    const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const pos = geometry.attributes.position;
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const side = Math.sign(x);
+    const w = smooth(blendFrom, blendTo, Math.abs(x)) * smooth(-26, -20, z);
+    if (w <= 0) continue;
+    const angle = -side * THREE.MathUtils.degToRad(dropDeg) * w;
+    const dx = x - side * pivotX;
+    const dz = z - pivotZ;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    pos.setXYZ(i, side * pivotX + dx * c - dz * s, pos.getY(i), pivotZ + dx * s + dz * c);
+  }
+  pos.needsUpdate = true;
+  return geometry;
+}
+
+// Weld duplicate vertices so normals average across faces: smooth shading
+// instead of visible facets.
+function smoothPerson(geometry) {
+  const bare = new THREE.BufferGeometry();
+  bare.setAttribute("position", geometry.attributes.position);
+  if (geometry.index) bare.setIndex(geometry.index);
+  const welded = mergeVertices(bare, 0.05);
+  welded.computeVertexNormals();
+  geometry.dispose();
+  return welded;
 }
 
 // Four soft faces from the lens (apex) to the screen corners.

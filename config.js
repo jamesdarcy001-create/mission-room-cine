@@ -153,7 +153,13 @@ export const CONFIG = {
 
   figures: {
     // outset: metres beyond the left screen's outer edge; forward: metres in front of its face.
-    presenter: { height: 1.78, outset: 0.8, forward: 0.22 },
+    presenter: {
+      height: 1.78,
+      outset: 0.45,
+      forward: 0.22,
+      // Lowering the model's A-pose arms, in the file's centimetres (see lowerArms).
+      arms: { pivotX: 20, pivotZ: 37, dropDeg: 42, blendFrom: 15, blendTo: 26 },
+    },
   },
 
   quality: {
