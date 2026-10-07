@@ -353,11 +353,14 @@ function createWorld(stage, coarse) {
   const rightTex = makeCanvasTexture(surfaces.right.canvas);
   const overlayTex = makeCanvasTexture(surfaces.overlay.canvas);
 
-  const modelTarget = new THREE.WebGLRenderTarget(CONFIG.screen.modelTargetWidth, CONFIG.screen.modelTargetHeight);
+  // Multisampled so the thin members are anti-aliased, and mipmapped so they
+  // do not shimmer as the model turns at the screen's small footprint.
+  const modelTarget = new THREE.WebGLRenderTarget(CONFIG.screen.modelTargetWidth, CONFIG.screen.modelTargetHeight, { samples: 4 });
   modelTarget.texture.colorSpace = THREE.LinearSRGBColorSpace;
-  modelTarget.texture.minFilter = THREE.LinearFilter;
+  modelTarget.texture.minFilter = THREE.LinearMipmapLinearFilter;
   modelTarget.texture.magFilter = THREE.LinearFilter;
-  modelTarget.texture.generateMipmaps = false;
+  modelTarget.texture.generateMipmaps = true;
+  modelTarget.texture.anisotropy = maxAniso;
 
   const screenMat = (tex) => trackM(new THREE.MeshStandardMaterial({
     color: 0x000000,
@@ -571,9 +574,8 @@ function createWorld(stage, coarse) {
   });
 
   const model = buildModel(trackG, trackM);
-  const modelCamera = new THREE.PerspectiveCamera(26, 16 / 9, 0.1, 40);
-  modelCamera.position.set(0.2, 1.62, 4.85);
-  modelCamera.lookAt(0, 0.78, 0);
+  const modelCamera = new THREE.PerspectiveCamera(CONFIG.model.fov, 16 / 9, 0.1, 60);
+  frameModelCamera(modelCamera);
 
 
   const sampleCanvas = document.createElement("canvas");
@@ -831,9 +833,11 @@ function updateModel(world, story) {
     const active = index === CONFIG.model.activeLevel;
     const blue = active ? story.resequence * (1 - story.reset) : 0;
     level.ivory.material.opacity = shown * (active ? 1 - blue : 1);
+    level.plate.material.opacity = shown * (active ? 1 - blue : 1) * CONFIG.model.slabOpacity;
     level.ivory.position.y = level.baseY + (1 - shown) * 0.08;
     if (level.blue) {
       level.blue.material.opacity = blue;
+      level.blue.userData.plate.material.opacity = blue * CONFIG.model.activeSlabOpacity;
       level.blue.position.y = level.baseY + (1 - Math.max(shown, blue)) * 0.08;
     }
   });
@@ -1110,6 +1114,58 @@ function glowCanvas() {
   return canvas;
 }
 
+// Aim the centre screen's model camera along CONFIG.model.view, back it off
+// until the model's bounds through a full turn fit CONFIG.model.frame, then
+// shift the view (setViewOffset) so those bounds centre on that rectangle.
+// The model is symmetric, so a half-turn of samples covers every angle.
+function frameModelCamera(camera) {
+  const W = CONFIG.screen.pxWidth;
+  const H = CONFIG.screen.pxHeight;
+  const rect = CONFIG.model.frame;
+  const look = new THREE.Vector3(0, 0.75, 0);
+  const dir = new THREE.Vector3(...CONFIG.model.view).normalize();
+  const points = [];
+  for (let k = 0; k < 36; k += 1) {
+    const a = (k / 36) * Math.PI;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    [-1.29, 1.29].forEach((x) => [-0.57, 0.57].forEach((z) => [0, 1.5].forEach((y) => {
+      points.push(new THREE.Vector3(x * cos + z * sin, y, -x * sin + z * cos));
+    })));
+  }
+  const v = new THREE.Vector3();
+  camera.clearViewOffset();
+  const measure = (d) => {
+    camera.position.copy(look).addScaledVector(dir, d);
+    camera.lookAt(look);
+    camera.updateMatrixWorld();
+    camera.updateProjectionMatrix();
+    const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+    points.forEach((p) => {
+      v.copy(p).project(camera);
+      b.x0 = Math.min(b.x0, v.x);
+      b.x1 = Math.max(b.x1, v.x);
+      b.y0 = Math.min(b.y0, v.y);
+      b.y1 = Math.max(b.y1, v.y);
+    });
+    return b;
+  };
+  const maxW = ((rect.x1 - rect.x0) / W) * 2;
+  const maxH = ((rect.y1 - rect.y0) / H) * 2;
+  let near = 1;
+  let far = 50;
+  for (let i = 0; i < 40; i += 1) {
+    const mid = (near + far) / 2;
+    const b = measure(mid);
+    if (b.x1 - b.x0 <= maxW && b.y1 - b.y0 <= maxH) far = mid;
+    else near = mid;
+  }
+  const b = measure(far);
+  const nowX = (((b.x0 + b.x1) / 2 + 1) / 2) * W;
+  const nowY = ((1 - (b.y0 + b.y1) / 2) / 2) * H;
+  camera.setViewOffset(W, H, nowX - (rect.x0 + rect.x1) / 2, nowY - (rect.y0 + rect.y1) / 2, W, H);
+}
+
 function buildModel(trackG, trackM) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(CONFIG.color.graphite850);
@@ -1125,15 +1181,34 @@ function buildModel(trackG, trackM) {
     transparent: true,
     opacity: 0,
   }));
+  const slabGeo = trackG(new THREE.PlaneGeometry(2.4, 1.0).rotateX(-Math.PI / 2));
+  const slab = (color) => {
+    const mesh = new THREE.Mesh(slabGeo, trackM(new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })));
+    mesh.renderOrder = -1;
+    return mesh;
+  };
   const levels = [0.16, 0.56, 0.96, 1.36].map((y, index) => {
     const group = membersAt(y, trackG, ivory());
+    const plate = slab(CONFIG.color.ivory);
+    plate.position.y = y;
+    group.add(plate);
     root.add(group);
     let blueMesh = null;
     if (index === CONFIG.model.activeLevel) {
       blueMesh = membersAt(y, trackG, blue());
+      const redPlate = slab(CONFIG.color.accent);
+      redPlate.position.y = y;
+      blueMesh.add(redPlate);
+      blueMesh.userData.plate = redPlate;
       root.add(blueMesh);
     }
-    return { ivory: group, blue: blueMesh, baseY: 0 };
+    return { ivory: group, blue: blueMesh, plate, baseY: 0 };
   });
   const columns = membersColumns(trackG, ivory());
   root.add(columns);
@@ -1142,7 +1217,7 @@ function buildModel(trackG, trackM) {
 
 function membersAt(y, trackG, material) {
   const group = new THREE.Group();
-  const t = 0.014;
+  const t = 0.018;
   const xs = [-1.2, -0.6, 0, 0.6, 1.2];
   [-0.5, 0.5].forEach((z) => {
     const beam = new THREE.Mesh(trackG(new THREE.BoxGeometry(2.55, t, t)), material);
@@ -1165,7 +1240,7 @@ function membersColumns(trackG, material) {
   const zs = [-0.5, 0.5];
   xs.forEach((x) => {
     zs.forEach((z) => {
-      const column = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.02, 1.48, 0.02)), material);
+      const column = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.024, 1.48, 0.024)), material);
       column.position.set(x, 0.74, z);
       group.add(column);
     });

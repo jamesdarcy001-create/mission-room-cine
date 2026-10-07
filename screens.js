@@ -17,18 +17,18 @@ export const LAYOUT = {
   chartLeft: 860,
   chartRight: 1968,
   chartTop: 340,
-  chartBottom: 1110,
+  chartBottom: 1074,
 };
 
 const FONT = {
-  // Sized for a screen seen ~450 px wide on the page: nothing under ~34 px.
+  // Sized for a screen seen ~450 px wide on the page: nothing under 38 px.
   eyebrow: `600 54px ${F.mono}`,
   title: `500 124px ${F.display}`,
   name: `500 56px ${F.display}`,
   mono: `500 42px ${F.mono}`,
-  monoStrong: `600 40px ${F.mono}`,
-  micro: `600 34px ${F.mono}`,
-  legend: `600 36px ${F.mono}`,
+  monoStrong: `600 42px ${F.mono}`,
+  micro: `600 38px ${F.mono}`,
+  legend: `600 40px ${F.mono}`,
 };
 
 const FONT5 = {
@@ -192,16 +192,27 @@ function drawGantt(ctx, story, baseline) {
     ctx.fillStyle = C.graphite400;
   }
 
+  // Row rules: a quiet line between activities.
+  ctx.fillStyle = C.white04;
+  for (let i = 1; i < activities.length; i += 1) {
+    ctx.fillRect(LAYOUT.pad, LAYOUT.chartTop + rowH * i - 1, W - LAYOUT.pad * 2, 3);
+  }
+
+  // Data date: a line through the chart (drawn under the bars) and a tag
+  // centred under it, clear of the bars and the week labels.
   const dateX = chartX(CONFIG.schedule.dataDate);
   ctx.fillStyle = C.ivory60;
-  ctx.fillRect(dateX, LAYOUT.chartTop - 8, 3, LAYOUT.chartBottom - LAYOUT.chartTop + 8);
-  ctx.save();
-  ctx.translate(dateX - 28, (LAYOUT.chartTop + LAYOUT.chartBottom) / 2);
-  ctx.rotate(-Math.PI / 2);
-  setFont(ctx, FONT.micro, C.ivory);
+  ctx.fillRect(dateX - 1.5, LAYOUT.chartTop - 8, 3, LAYOUT.chartBottom - LAYOUT.chartTop + 14);
+  setFont(ctx, FONT.micro, C.graphite950);
   ctx.textAlign = "center";
-  ctx.fillText("DATA DATE", 0, 0);
-  ctx.restore();
+  const tag = "DATA DATE";
+  const tagW = ctx.measureText(tag).width + 36;
+  ctx.fillStyle = C.sand200;
+  ctx.fillRect(dateX - tagW / 2, LAYOUT.chartBottom + 8, tagW, 48);
+  ctx.fillStyle = C.graphite950;
+  ctx.fillText(tag, dateX, LAYOUT.chartBottom + 33);
+
+  drawLinks(ctx, story, baseline, rowH);
 
   activities.forEach((activity, i) => {
     const y = LAYOUT.chartTop + rowH * i;
@@ -251,29 +262,55 @@ function drawGantt(ctx, story, baseline) {
     ctx.restore();
   });
 
+}
+
+// Finish-to-start links: out of the predecessor's end, down through the gap
+// between the rows, along to just before the successor and into its start,
+// with an arrowhead. Drawn before the bars so the bars sit on top, and faded
+// in with the later of the two bars.
+function drawLinks(ctx, story, baseline, rowH) {
+  const activities = CONFIG.schedule.activities;
   ctx.save();
   ctx.strokeStyle = C.graphite500;
+  ctx.fillStyle = C.graphite500;
   ctx.lineWidth = 4;
-  ctx.lineJoin = "miter";
+  ctx.lineJoin = "round";
   activities.forEach((activity, i) => {
     if (activity.succ == null) return;
     const fromIndex = activity.succ === 0 ? activities.findIndex((item) => item.edit) : activities.findIndex((item) => item.succ === activity.succ - 1);
     if (fromIndex < 0) return;
+    const alpha = baseline ? 1 : Math.min(story.barRise[fromIndex], story.barRise[i]);
+    if (alpha <= 0.01) return;
     const a = barInterval(story, fromIndex, baseline);
     const b = barInterval(story, i, baseline);
     const y1 = rowCenterY(fromIndex);
     const y2 = rowCenterY(i);
+    const gapY = LAYOUT.chartTop + rowH * (fromIndex + 1);
     const x1 = chartX(a.end);
     const x2 = chartX(b.start);
+    const out = x1 + 22;
+    const into = x2 - 22;
+    ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.moveTo(x1, y1);
-    ctx.lineTo(x1 + 26, y1);
-    ctx.lineTo(x1 + 26, y2);
-    ctx.lineTo(x2, y2);
+    ctx.lineTo(out, y1);
+    if (into >= out) {
+      ctx.lineTo(out, y2);
+    } else {
+      ctx.lineTo(out, gapY);
+      ctx.lineTo(into, gapY);
+      ctx.lineTo(into, y2);
+    }
+    ctx.lineTo(x2 - 12, y2);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 16, y2 - 10);
+    ctx.lineTo(x2 - 16, y2 + 10);
+    ctx.closePath();
+    ctx.fill();
   });
   ctx.restore();
-
 }
 
 // Cumulative progress (0..1) across the 16-week chart (x 0..1).
@@ -317,18 +354,28 @@ function drawCurve(ctx, story, baseline) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
 
-  const left = x + 64;
-  const right = x + w - 46;
-  const bottom = y + h - 48;
-  const top = y + 70;
+  const left = x + 128;
+  const right = x + w - 60;
+  const bottom = y + h - 84;
+  const top = y + 128;
   const px = (u) => left + u * (right - left);
   const py = (v) => bottom - v * (bottom - top);
 
+  // Gridlines at 0, 50 and 100% with labels in the left margin.
+  setFont(ctx, FONT.micro, C.graphite500);
+  ctx.textAlign = "right";
+  [0, 0.5, 1].forEach((v) => {
+    ctx.fillStyle = C.white06;
+    ctx.fillRect(left, py(v) - 1, right - left, 3);
+    ctx.fillStyle = C.graphite500;
+    ctx.fillText(`${Math.round(v * 100)}%`, left - 18, py(v));
+  });
   ctx.strokeStyle = C.graphite700;
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(left, y + 36);
+  ctx.moveTo(left, top - 12);
   ctx.lineTo(left, bottom);
-  ctx.lineTo(x + w - 36, bottom);
+  ctx.lineTo(right + 24, bottom);
   ctx.stroke();
 
   const today = CONFIG.schedule.dataDate;
@@ -343,13 +390,13 @@ function drawCurve(ctx, story, baseline) {
   ctx.strokeStyle = C.graphite500;
   ctx.setLineDash([6, 8]);
   ctx.beginPath();
-  ctx.moveTo(px(today), top - 20);
+  ctx.moveTo(px(today), top - 12);
   ctx.lineTo(px(today), bottom);
   ctx.stroke();
   ctx.setLineDash([]);
   setFont(ctx, FONT.monoStrong, C.graphite400);
   ctx.textAlign = "center";
-  ctx.fillText("TODAY", px(today), bottom + 34);
+  ctx.fillText("TODAY", px(today), bottom + 42);
   ctx.restore();
 
   const plot = (kind, color, width, dash, from, to) => {
@@ -373,8 +420,27 @@ function drawCurve(ctx, story, baseline) {
     ctx.restore();
   };
 
-  plot("planned", C.ivory, 5, [], 0, plan * reveal);
-  plot("actual", C.sand300, 7, [], 0, today * reveal);
+  // Soft area under actual, up to today.
+  const actualTo = today * reveal;
+  if (actualTo > 0.001) {
+    ctx.save();
+    const grad = ctx.createLinearGradient(0, top, 0, bottom);
+    grad.addColorStop(0, "rgba(220,213,202,0.16)");
+    grad.addColorStop(1, "rgba(220,213,202,0.02)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(px(0), bottom);
+    for (let i = 0; i <= 80; i += 1) {
+      const u = actualTo * (i / 80);
+      ctx.lineTo(px(u), py(seriesPoint("actual", u, slip)));
+    }
+    ctx.lineTo(px(actualTo), bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  plot("actual", C.sand300, 8, [], 0, actualTo);
+  plot("planned", C.ivory, 4, [], 0, plan * reveal);
   plot("forecast", C.accent, 7, [20, 12], today, today + (finish - today) * forecastReveal);
 
   // Finish markers on the time axis: plan in ivory, forecast in red. Once the
@@ -391,7 +457,7 @@ function drawCurve(ctx, story, baseline) {
     ctx.stroke();
     setFont(ctx, FONT.monoStrong, color);
     ctx.textAlign = "center";
-    ctx.fillText(label, px(u), bottom + 34);
+    ctx.fillText(label, px(u), bottom + 42);
     ctx.restore();
   };
   tick(plan, C.ivory, "PLAN", reveal);
@@ -399,7 +465,7 @@ function drawCurve(ctx, story, baseline) {
 
   if (slip > 0.02) {
     const days = Math.round(slip * CONFIG.schedule.editWeeks * 7);
-    const y0 = py(1) - 26;
+    const y0 = py(1) - 30;
     ctx.save();
     ctx.globalAlpha = Math.min(1, slip * 2);
     ctx.strokeStyle = C.accent;
@@ -414,7 +480,7 @@ function drawCurve(ctx, story, baseline) {
     ctx.stroke();
     setFont(ctx, FONT.eyebrow, C.accent);
     ctx.textAlign = "right";
-    ctx.fillText(`+${days} DAYS`, px(finish), y0 - 14);
+    ctx.fillText(`+${days} DAYS`, px(finish), y0 - 34);
     ctx.restore();
   }
 
@@ -424,10 +490,12 @@ function drawCurve(ctx, story, baseline) {
     ["FORECAST", C.accent],
   ];
   legend.forEach((item, i) => {
-    const lx = x + 90 + i * 330;
-    const ly = y + 36;
+    const lx = x + 48 + i * 340;
+    const ly = y + 50;
+    // Swatch weight matches the line: actual is the heavy one.
+    const sw = item[0] === "ACTUAL" ? 14 : 8;
     ctx.fillStyle = item[1];
-    ctx.fillRect(lx, ly - 4, 44, 8);
+    ctx.fillRect(lx, ly - sw / 2, 44, sw);
     setFont(ctx, FONT.legend, C.sand300);
     ctx.textAlign = "left";
     ctx.fillText(item[0], lx + 58, ly);
@@ -548,6 +616,21 @@ function drawKpis(ctx, story, baseline) {
     setFont(ctx, FONT.micro, C.graphite400);
     ctx.textAlign = "left";
     ctx.fillText(card.label, x + 28, y + 36);
+    ctx.textAlign = "right";
+    if (card.kind === "cpi") {
+      setFont(ctx, FONT.micro, C.graphite500);
+      ctx.fillText("ON BUDGET", x + w - 28, y + 36);
+    } else if (!baseline) {
+      const roll = card.kind === "spi" ? story.spiRoll : story.dateRoll;
+      if (roll > 0.01) {
+        ctx.globalAlpha = labelAlpha * Math.min(1, roll * 1.5);
+        setFont(ctx, FONT.micro, C.accent);
+        const note = card.kind === "spi"
+          ? (CONFIG.performance.spiNext - CONFIG.performance.spiBase).toFixed(2)
+          : `+${CONFIG.schedule.editWeeks * 7} DAYS`;
+        ctx.fillText(note, x + w - 28, y + 36);
+      }
+    }
     ctx.restore();
     if ((baseline ? 1 : story.kpiCount) <= 0) {
       ctx.restore();
@@ -634,8 +717,8 @@ function paintOverlay(ctx, story, baseline) {
 
   const showTag = !baseline && story.resequence > 0.15 && story.reset < 0.85;
   if (showTag) {
-    const x = W - 420;
-    const y = 250;
+    const x = W - LAYOUT.pad - 280;
+    const y = H - 250;
     ctx.save();
     ctx.globalAlpha = Math.min(1, story.resequence) * (1 - story.reset);
     ctx.fillStyle = C.accent;

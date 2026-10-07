@@ -146,6 +146,15 @@ export const CONFIG = {
     yawRate: 0.12,
     levels: 4,
     activeLevel: 3,
+    // Direction from the model's centre to its camera, and its lens.
+    view: [0.2, 0.62, 4.85],
+    fov: 22,
+    // Where the turning model must sit on the 2048 x 1152 centre screen:
+    // under the header, above the datasheet band, with even margins.
+    frame: { x0: 160, y0: 292, x1: 1888, y1: 878 },
+    // Faint floor plates per level; the edited level's plate turns red.
+    slabOpacity: 0.07,
+    activeSlabOpacity: 0.3,
   },
 
   camera: {
