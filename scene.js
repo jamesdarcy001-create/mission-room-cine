@@ -1053,7 +1053,7 @@ function createPerson(height, trackG, trackM) {
       if (!node.isMesh) return;
       node.material.dispose?.();
       node.material = body;
-      node.geometry = smoothPerson(lowerArms(node.geometry));
+      node.geometry = smoothPerson(smoothHead(narrowShoulders(lowerArms(node.geometry))));
       person.loaded.push(node.geometry);
     });
     const upright = new THREE.Group();
@@ -1101,6 +1101,84 @@ function lowerArms(geometry) {
   }
   pos.needsUpdate = true;
   return geometry;
+}
+
+function smoothstep(a, b, v) {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+// Narrower shoulders: pull everything more than `core` cm from the centre line
+// inward by `squeeze`, across the shoulder band only, so the torso core, neck
+// and hands keep their shape and the band fades out with no kink.
+function narrowShoulders(geometry) {
+  const { squeeze, core, rampFrom, rampTo, neckFrom, neckTo } = CONFIG.figures.presenter.shoulders;
+  const pos = geometry.attributes.position;
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const w = smoothstep(rampFrom, rampTo, z) * (1 - smoothstep(neckFrom, neckTo, z));
+    const reach = Math.abs(x) - core;
+    if (w <= 0 || reach <= 0) continue;
+    pos.setX(i, x - Math.sign(x) * reach * squeeze * w);
+  }
+  pos.needsUpdate = true;
+  return geometry;
+}
+
+// A smooth, featureless head. The model's own head has eye sockets and a mouth
+// cavity; pressing those onto a surface leaves folded triangles. So the head's
+// triangles are dropped and a clean ellipsoid of the same size takes their
+// place. Vertices in the chin/neck band are eased onto that ellipsoid so the
+// neck meets it without a step.
+function smoothHead(geometry) {
+  const { centre, radii, from, to } = CONFIG.figures.presenter.head;
+  const pos = geometry.attributes.position;
+  const above = new Uint8Array(pos.count);
+  for (let i = 0; i < pos.count; i += 1) above[i] = pos.getZ(i) >= to ? 1 : 0;
+  for (let i = 0; i < pos.count; i += 1) {
+    const z = pos.getZ(i);
+    const w = smoothstep(from, to, z);
+    if (w <= 0) continue;
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const dx = (x - centre[0]) / radii[0];
+    const dy = (y - centre[1]) / radii[1];
+    const dz = (z - centre[2]) / radii[2];
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    pos.setXYZ(
+      i,
+      x + (centre[0] + (dx / len) * radii[0] - x) * w,
+      y + (centre[1] + (dy / len) * radii[1] - y) * w,
+      z + (centre[2] + (dz / len) * radii[2] - z) * w,
+    );
+  }
+
+  // Keep every triangle that is not wholly inside the head, then append the
+  // ellipsoid. Positions and index only: normals are rebuilt after welding.
+  const source = geometry.index ? geometry.index.array : Array.from({ length: pos.count }, (_, i) => i);
+  const kept = [];
+  for (let i = 0; i < source.length; i += 3) {
+    const a = source[i];
+    const b = source[i + 1];
+    const c = source[i + 2];
+    if (above[a] && above[b] && above[c]) continue;
+    kept.push(a, b, c);
+  }
+  const head = new THREE.SphereGeometry(1, 40, 28);
+  head.scale(radii[0], radii[1], radii[2]);
+  head.translate(centre[0], centre[1], centre[2]);
+  const headPos = head.attributes.position;
+  const positions = new Float32Array((pos.count + headPos.count) * 3);
+  positions.set(pos.array.subarray(0, pos.count * 3), 0);
+  positions.set(headPos.array, pos.count * 3);
+  head.index.array.forEach((v) => kept.push(v + pos.count));
+  head.dispose();
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  out.setIndex(kept);
+  geometry.dispose();
+  return out;
 }
 
 // Weld duplicate vertices so normals average across faces: smooth shading
