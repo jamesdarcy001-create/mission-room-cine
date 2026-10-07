@@ -1,27 +1,27 @@
 @font-face {
   font-family: "MRC Cine Inter";
-  src: url("https://cdn.jsdelivr.net/npm/@fontsource/inter@5.3.0/files/inter-latin-400-normal.woff2") format("woff2");
+  src: url("./fonts/inter-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "MRC Cine Inter";
-  src: url("https://cdn.jsdelivr.net/npm/@fontsource/inter@5.3.0/files/inter-latin-500-normal.woff2") format("woff2");
+  src: url("./fonts/inter-latin-500-normal.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "MRC Cine Mono";
-  src: url("https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  src: url("./fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "MRC Cine Mono";
-  src: url("https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-600-normal.woff2") format("woff2");
+  src: url("./fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -58,42 +58,48 @@
   background: transparent;
 }
 
-/* The audience layer sits over the canvas at the same size, so it shares the
-   canvas's arrival and lines up with the room. */
-.mrc-cine__stage .mrc-cine__people {
+/* Three layers fill the box: a still of the room's first frame (in the page's
+   HTML, so it shows before any script), the live canvas over it, and the
+   audience cut-out over both. The canvas fades in over the still, which is
+   the same frame, so the hand-over is invisible; the still is then hidden. */
+.mrc-cine__poster,
+.mrc-cine__people,
+.mrc-cine__stage canvas {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  user-select: none;
-  max-width: none;
-}
-
-.mrc-cine__stage canvas,
-.mrc-cine__stage .mrc-cine__people {
   display: block;
   width: 100%;
   height: 100%;
+  max-width: none;
   border: 0;
   border-radius: 0;
-  /* Arrives softly on its first frame: fade up with a slight settle. */
+  pointer-events: none;
+  user-select: none;
+}
+
+.mrc-cine__poster {
+  z-index: 0;
+}
+
+.mrc-cine__stage {
+  z-index: 1;
+}
+
+.mrc-cine__people {
+  z-index: 2;
+}
+
+.mrc-cine__stage canvas {
   opacity: 0;
-  transform: scale(0.97) translateY(1.5%);
-  transition: opacity 1.4s cubic-bezier(0.22, 1, 0.36, 1), transform 1.8s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.5s linear;
 }
 
-.mrc-cine__stage.is-live canvas,
-.mrc-cine__stage.is-live .mrc-cine__people {
+.mrc-cine__stage.is-live canvas {
   opacity: 1;
-  transform: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mrc-cine__stage canvas,
-  .mrc-cine__stage .mrc-cine__people {
-    transform: none;
-    transition: opacity 0.4s linear;
-  }
+.mrc-cine.is-live .mrc-cine__poster {
+  visibility: hidden;
 }
 
 .mrc-cine__debug {

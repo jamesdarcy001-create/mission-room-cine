@@ -84,7 +84,14 @@ export const CONFIG = {
   // Playback speed of the story (1 = authored timing).
   speed: 1.45,
   introSpeed: 1,
-  posterTime: 6.4,
+  // The story second the scene opens on: everything populated, just before the
+  // change is selected. The poster still (assets/poster-*.webp) is this frame,
+  // so the live scene takes over from it seamlessly.
+  posterTime: 5.15,
+  poster: {
+    image: "assets/poster-1440.webp",
+    srcset: "assets/poster-1440.webp 1440w, assets/poster-2560.webp 2560w",
+  },
 
   room: {
     panelWidth: 3,
@@ -96,7 +103,11 @@ export const CONFIG = {
     plinthDepth: 0.32,
     ambient: 0.07,
     hemi: 0.09,
-    rectIntensity: 14,
+    // Each screen's light on the room: spot intensity (candela), how far in
+    // front of the screen's centre it sits (metres) and its half-angle.
+    screenLight: 30,
+    screenLightOffset: 0.05,
+    screenLightAngle: 1.2,
     exposure: 1.05,
     beamOpacity: 0.075,
     // Projector height above the screen tops, and where their rods end.

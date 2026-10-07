@@ -1,7 +1,8 @@
-import * as THREE from "https://esm.sh/three@0.186.1";
-import { RectAreaLightUniformsLib } from "https://esm.sh/three@0.186.1/addons/lights/RectAreaLightUniformsLib.js";
-import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
-import { mergeGeometries } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
+// Bare specifiers: the build (npm run build) bundles three from node_modules
+// into mrc-cine.min.js; index.html maps them to esm.sh for unbundled work.
+import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
@@ -46,6 +47,22 @@ function hasWebGL() {
   }
 }
 
+function layer(el, className, image, srcset) {
+  let img = el.querySelector(`.${className}`);
+  if (img) return img;
+  const asset = (path) => new URL(`./${path}`, import.meta.url).href;
+  img = document.createElement("img");
+  img.className = className;
+  img.alt = "";
+  img.decoding = "async";
+  img.src = asset(image);
+  if (srcset) {
+    img.srcset = srcset.replace(/(\S+\.webp)/g, (path) => asset(path));
+    img.sizes = "(min-width: 1472px) 1440px, 100vw";
+  }
+  return img;
+}
+
 function mount(el) {
   const label = el.getAttribute("aria-label") || CONFIG.ariaLabel;
   if (el.getAttribute("role") === "img") el.removeAttribute("role");
@@ -55,7 +72,14 @@ function mount(el) {
   stage.className = "mrc-cine__stage";
   stage.setAttribute("role", "img");
   stage.setAttribute("aria-label", label);
-  el.append(stage);
+  // The still of the first frame and the audience layer. A page that wants them
+  // on screen before any script runs puts them in its HTML; otherwise they are
+  // created here.
+  const poster = layer(el, "mrc-cine__poster", CONFIG.poster.image, CONFIG.poster.srcset);
+  const people = layer(el, "mrc-cine__people", CONFIG.figures.audience.image);
+  el.insertBefore(poster, el.firstChild);
+  el.insertBefore(stage, poster.nextSibling);
+  el.append(people);
 
   const ui = { el, stage, onScreen: false, started: false, destroyed: false };
   if (!hasWebGL()) return;
@@ -82,11 +106,10 @@ async function boot(ui) {
       document.fonts.load('600 36px "MRC Cine Mono"'),
       document.fonts.load('400 24px "MRC Cine Mono"'),
     ]),
-    new Promise((resolve) => setTimeout(resolve, 2500)),
+    new Promise((resolve) => setTimeout(resolve, 1200)),
   ]);
   if (!ui.el.isConnected || ui.destroyed) return;
 
-  RectAreaLightUniformsLib.init();
   const reduceQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
   const reduce = reduceQuery.matches && !POSTER_MODE;
   const coarse = window.matchMedia("(pointer: coarse)").matches;
@@ -94,7 +117,8 @@ async function boot(ui) {
   const story = createStoryState();
   // Auto-play clock (seconds since the scene started running). Reduced motion
   // shows the confirmed end state, still.
-  let elapsed = POSTER_MODE ? CONFIG.posterTime : reduce ? CONFIG.storyEnd : 0;
+  // Open on the poster frame (the still already on screen), not the power-on.
+  let elapsed = reduce ? CONFIG.storyEnd : CONFIG.posterTime;
   // Debug only: ?debug&at=9 starts the clock at story second 9.
   if (DEBUG_MODE && params.has("at")) elapsed = parseFloat(params.get("at")) || 0;
   let t = elapsed;
@@ -214,7 +238,7 @@ async function boot(ui) {
     const warm = (b) => b * (1 + CONFIG.intro.warmSwell * Math.sin(Math.PI * b));
     world.lights.forEach((light, index) => {
       const bg = story.bgEach[index];
-      light.intensity = CONFIG.room.rectIntensity * warm(bg) * Math.max(story.powerEach[index], bg);
+      light.intensity = CONFIG.room.screenLight * warm(bg) * Math.max(story.powerEach[index], bg);
       light.color.lerp(world.lightTargets[index], lightBlend);
     });
     world.screenMats.forEach((mat, i) => {
@@ -232,6 +256,7 @@ async function boot(ui) {
     if (!ui.live) {
       ui.live = true;
       ui.stage.classList.add("is-live");
+      setTimeout(() => ui.el.classList.add("is-live"), 600);
     }
     if (POSTER_MODE) capturePoster(world);
     if (debug) {
@@ -294,18 +319,18 @@ async function boot(ui) {
     world.renderer.dispose();
     world.renderer.forceContextLoss();
     world.renderer.domElement.remove();
-    people.remove();
     debug?.remove();
   }
 
+  // Compile every shader before the first frame, off the main thread where the
+  // browser allows (KHR_parallel_shader_compile), so the hand-over from the
+  // still never stalls.
+  await Promise.all([
+    world.renderer.compileAsync(world.scene, world.camera),
+    world.renderer.compileAsync(world.model.scene, world.modelCamera),
+  ]).catch(() => {});
+  if (destroyed || !ui.el.isConnected) return;
   ui.stage.appendChild(world.renderer.domElement);
-  // The audience: a full-frame cut-out drawn over the scene (see CONFIG.figures.audience).
-  const people = document.createElement("img");
-  people.className = "mrc-cine__people";
-  people.alt = "";
-  people.decoding = "async";
-  people.src = new URL(`./${CONFIG.figures.audience.image}`, import.meta.url).href;
-  ui.stage.appendChild(people);
   sync();
 }
 
@@ -464,8 +489,12 @@ function createWorld(stage, coarse) {
       group.add(overlay);
     }
     scene.add(group);
-    const light = new THREE.RectAreaLight("#faf9f5", 0, panelW * 0.92, panelH * 0.92);
-    scene.add(light);
+    // Each screen's glow on the room: a wide, soft spot just in front of its
+    // centre, aimed straight out, so it lights the table and floor but never
+    // the screen behind it. Far cheaper than an area light, which needs
+    // ~250 KB of lookup tables.
+    const light = new THREE.SpotLight("#faf9f5", 0, 0, CONFIG.room.screenLightAngle, 1, 2);
+    scene.add(light, light.target);
     addArchitecture(group, mesh);
     return { group, mesh, light, frames: built, side };
   }
@@ -599,8 +628,8 @@ function createWorld(stage, coarse) {
       const arch = group.userData.arch;
       const center = mesh.getWorldPosition(new THREE.Vector3());
       const normal = new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld);
-      light.position.copy(center);
-      light.lookAt(center.clone().add(normal));
+      light.position.copy(center).addScaledVector(normal, CONFIG.room.screenLightOffset);
+      light.target.position.copy(center).addScaledVector(normal, 5);
       const bottom = screenPoint(mesh, 0.5, 0, 0, new THREE.Vector3());
       arch.plinth.position.set(bottom.x + normal.x * 0.08, CONFIG.room.plinthHeight / 2, bottom.z + normal.z * 0.08);
       arch.plinth.rotation.y = group.rotation.y;

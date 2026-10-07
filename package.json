@@ -1,0 +1,12 @@
+{
+  "name": "mission-room-cine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild scene.js --bundle --format=esm --minify --target=es2020 --legal-comments=eof --outfile=mrc-cine.min.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "three": "0.186.1"
+  }
+}
