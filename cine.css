@@ -53,13 +53,17 @@
   background-color: #1b1b1b;
 }
 
-/* Tall phones: a full-height stage would leave most of it empty, because
-   the room is wide. Pin a 4:5 stage in the middle of the viewport instead. */
-@media (max-aspect-ratio: 4/5) {
+/* Portrait screens: the room is wide, so a full-height stage would be mostly
+   empty. Pin a 2:1 stage in the middle of the viewport; the camera fits the
+   whole setup inside it. */
+@media (max-aspect-ratio: 1/1) {
   .mrc-cine__pin {
-    height: 125vw;
-    top: calc(50vh - 62.5vw);
-    top: calc(50svh - 62.5vw);
+    height: 50vw;
+    top: calc(50vh - 25vw);
+    top: calc(50svh - 25vw);
+  }
+  .mrc-cine__vignette {
+    display: none;
   }
 }
 

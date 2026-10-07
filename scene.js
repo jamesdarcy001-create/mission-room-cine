@@ -4,9 +4,10 @@ import { EffectComposer } from "https://esm.sh/three@0.186.1/addons/postprocessi
 import { RenderPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
+import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
-import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceDirtyKey } from "./screens.js";
+import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
 
 const POSTER_URL = new URL("./poster.webp", import.meta.url).href;
 const params = new URLSearchParams(window.location.search);
@@ -94,7 +95,7 @@ async function boot(ui) {
   let raf = 0;
   let last = performance.now();
   let paintAcc = 1;
-  let paintKey = "";
+  let paintKeys = surfaceKeys(story);
   let lightAcc = 0;
   let destroyed = false;
   let revealed = false;
@@ -110,7 +111,7 @@ async function boot(ui) {
   story.cursorU = startPoint.u;
   story.cursorV = startPoint.v;
   paintSurfaces(world.surfaces, story);
-  paintKey = surfaceDirtyKey(story);
+  paintKeys = surfaceKeys(story);
   world.markTextures();
   applyTier(world, tierIndex, coarse);
 
@@ -157,7 +158,7 @@ async function boot(ui) {
     if (destroyed) return;
     resize();
     world.markTextures();
-    paintKey = "";
+    paintKeys = { left: "", right: "", overlay: "" };
   };
   world.renderer.domElement.addEventListener("webglcontextlost", onLost);
   world.renderer.domElement.addEventListener("webglcontextrestored", onRestored);
@@ -197,12 +198,13 @@ async function boot(ui) {
     story.cursorU = point.u;
     story.cursorV = point.v;
     paintAcc += dt;
-    const key = surfaceDirtyKey(story);
-    if (key !== paintKey && paintAcc >= 1 / CONFIG.screen.maxFps) {
+    const keys = surfaceKeys(story);
+    const dirty = Object.keys(keys).filter((name) => keys[name] !== paintKeys[name]);
+    if (dirty.length && paintAcc >= 1 / CONFIG.screen.maxFps) {
       paintAcc = 0;
-      paintKey = key;
-      paintSurfaces(world.surfaces, story);
-      world.markTextures();
+      paintKeys = keys;
+      paintSurfaces(world.surfaces, story, dirty);
+      world.markTextures(dirty);
     }
     lightAcc += dt;
     if (lightAcc > 0.25) {
@@ -397,9 +399,9 @@ function createWorld(stage, coarse) {
     metalness: 0,
   }));
   const mountMat = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite875,
-    roughness: 0.7,
-    metalness: 0.08,
+    color: CONFIG.color.graphite800,
+    roughness: 0.32,
+    metalness: 0.45,
   }));
 
   const screens = {
@@ -461,8 +463,8 @@ function createWorld(stage, coarse) {
   function addArchitecture(group, mesh) {
     const plinth = new THREE.Mesh(trackG(new THREE.BoxGeometry(panelW, CONFIG.room.plinthHeight, CONFIG.room.plinthDepth)), plinthMat);
     const fascia = new THREE.Mesh(trackG(new THREE.BoxGeometry(panelW, CONFIG.room.fasciaHeight, 0.14)), plinthMat);
-    const mount = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.36, 0.15, 0.42)), mountMat);
-    const stem = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.04, 0.6, 0.04)), mountMat);
+    const mount = new THREE.Mesh(trackG(new RoundedBoxGeometry(0.3, 0.075, 0.26, 4, 0.03)), mountMat);
+    const stem = new THREE.Mesh(trackG(new THREE.CylinderGeometry(0.008, 0.008, 0.6, 12)), mountMat);
     scene.add(plinth, fascia, mount, stem);
     group.userData.arch = { plinth, fascia, mount, stem, mesh };
   }
@@ -521,7 +523,7 @@ function createWorld(stage, coarse) {
     toneMapped: false,
     opacity: 0,
   }));
-  const lensGeo = trackG(new THREE.CylinderGeometry(0.055, 0.065, 0.05, 24));
+  const lensGeo = trackG(new THREE.CylinderGeometry(0.026, 0.03, 0.012, 32));
   const glows = [];
 
   const moteCount = 42;
@@ -628,17 +630,17 @@ function createWorld(stage, coarse) {
       arch.mount.position.y = CONFIG.room.plinthHeight + panelH + 0.78;
       arch.mount.lookAt(center);
       arch.stem.position.copy(arch.mount.position);
-      arch.stem.position.y += 0.37;
+      arch.stem.position.y += 0.33;
       arch.mount.updateMatrixWorld(true);
 
       const lens = new THREE.Mesh(lensGeo, lensMat);
       lens.rotation.x = Math.PI / 2;
-      lens.position.z = 0.215;
+      lens.position.z = 0.131;
       arch.mount.add(lens);
-      const start = arch.mount.localToWorld(new THREE.Vector3(0, 0, 0.25));
+      const start = arch.mount.localToWorld(new THREE.Vector3(0, 0, 0.14));
       const glow = new THREE.Sprite(glowMat);
       glow.position.copy(start);
-      glow.scale.setScalar(0.85);
+      glow.scale.setScalar(CONFIG.room.glowSize);
       scene.add(glow);
       glows.push(glow);
 
@@ -708,6 +710,7 @@ function createWorld(stage, coarse) {
     right: screenFit(screens.right),
   };
   fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right];
+  fitSets.screens = [screens.left, screens.centre, screens.right].flatMap((entry) => boxPoints(entry.mesh));
 
   const clockVectors = {
     tip: new THREE.Vector3(),
@@ -774,10 +777,11 @@ function createWorld(stage, coarse) {
     tmp: clockVectors,
     updateMatrices,
     sampleLights,
-    markTextures() {
-      leftTex.needsUpdate = true;
-      rightTex.needsUpdate = true;
-      overlayTex.needsUpdate = true;
+    markTextures(only) {
+      const textures = { left: leftTex, right: rightTex, overlay: overlayTex };
+      Object.keys(textures).forEach((name) => {
+        if (!only || only.includes(name)) textures[name].needsUpdate = true;
+      });
     },
   };
 }
@@ -789,7 +793,7 @@ function screenPoint(mesh, u, v, z, out) {
 }
 
 // The person is there for scale only: just outside the left wing's outer edge,
-// clear of the screens from the camera's side, turned to watch the room.
+// clear of the screens from the camera's side, facing the camera.
 function placePerson(figure, mesh) {
   const edge = screenPoint(mesh, 0, 0, 0, new THREE.Vector3());
   const along = screenPoint(mesh, 1, 0, 0, new THREE.Vector3()).sub(edge).normalize();
@@ -797,7 +801,8 @@ function placePerson(figure, mesh) {
   const { outset, forward } = CONFIG.figures.presenter;
   figure.root.position.copy(edge).addScaledVector(along, -outset).addScaledVector(normal, forward);
   figure.root.position.y = 0;
-  figure.root.lookAt(0, 0, 0.6);
+  const [dx, , dz] = CONFIG.camera.direction;
+  figure.root.lookAt(figure.root.position.x - dx, 0, figure.root.position.z - dz);
 }
 
 function updateFrames(world, story) {
@@ -827,7 +832,7 @@ function updateBeams(world, story) {
   const opacity = CONFIG.room.beamOpacity * on;
   world.beamMat.uniforms.uOpacity.value = opacity;
   world.lensMat.color.set(CONFIG.color.graphite700).lerp(world.tmp.lens.set(CONFIG.color.sand200).multiplyScalar(CONFIG.room.lensBoost), on);
-  world.glowMat.opacity = on;
+  world.glowMat.opacity = CONFIG.room.glowOpacity * on;
   world.glows.forEach((glow) => {
     glow.visible = on > 0.01;
   });
@@ -915,7 +920,10 @@ function placePulse(world, mesh, along, v) {
 // basis (x, y, depth z), the nearest camera that keeps |x - cx| <= t (z - cz)
 // for every point is cz = (A + B) / 2, cx = t (B - A) / 2, where
 // A = min(z - x / t) and B = min(z + x / t).
-function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp) {
+//
+// With `centre` given (camera-basis x, y), the frame is held on that point and
+// only the distance is solved: cz = min(z - |x - cx| / tH, z - |y - cy| / tV).
+function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp, centre) {
   tmp.right.crossVectors(forward, UP).normalize();
   tmp.up.crossVectors(tmp.right, forward).normalize();
   const tV = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * (1 - margin.y);
@@ -924,6 +932,7 @@ function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp) {
   let bx = Infinity;
   let ay = Infinity;
   let by = Infinity;
+  let held = Infinity;
   points.forEach((p) => {
     const x = p.dot(tmp.right);
     const y = p.dot(tmp.up);
@@ -932,20 +941,12 @@ function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp) {
     bx = Math.min(bx, z + x / tH);
     ay = Math.min(ay, z - y / tV);
     by = Math.min(by, z + y / tV);
+    if (centre) held = Math.min(held, z - Math.abs(x - centre.x) / tH, z - Math.abs(y - centre.y) / tV);
   });
-  const cz = Math.min((ax + bx) / 2, (ay + by) / 2);
-  const cx = (tH * (bx - ax)) / 2;
-  const cy = (tV * (by - ay)) / 2;
+  const cx = centre ? centre.x : (tH * (bx - ax)) / 2;
+  const cy = centre ? centre.y : (tV * (by - ay)) / 2;
+  const cz = centre ? held : Math.min((ax + bx) / 2, (ay + by) / 2);
   return out.copy(tmp.right).multiplyScalar(cx).addScaledVector(tmp.up, cy).addScaledVector(forward, cz);
-}
-
-// Which screen the narrow (pan) framing follows: 0 left, 1 centre, 2 right.
-// Opens on the centre screen as the model builds, moves to the left screen for
-// the edit, then follows the pulse across to the right screen.
-function panFocus(t) {
-  const toLeft = ease.sine(Math.min(1, Math.max(0, (t - 3.6) / 1.4)));
-  const across = ease.sine(Math.min(1, Math.max(0, (t - 7.75) / 1.5)));
-  return 1 - toLeft + 2 * across;
 }
 
 function updateCamera(world, story) {
@@ -956,17 +957,11 @@ function updateCamera(world, story) {
   const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2])
     .normalize()
     .applyAxisAngle(UP, yaw);
-  const margin = aspect < cam.panBelowAspect ? cam.marginPan : cam.margin;
-  if (aspect < cam.panBelowAspect) {
-    const focus = panFocus(story.t);
-    const lo = Math.min(1, Math.floor(focus));
-    const sets = [world.fitSets.left, world.fitSets.centre, world.fitSets.right];
-    fitCamera(sets[lo], forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
-    fitCamera(sets[lo + 1], forward, cam.fov, aspect, margin, world.tmp.fitB, world.tmp);
-    world.tmp.camPos.lerpVectors(world.tmp.fitA, world.tmp.fitB, focus - lo);
-  } else {
-    fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp);
-  }
+  // Hold the frame on the middle of the three screens, then back off until the
+  // whole setup (person and projectors included) fits around it.
+  fitCamera(world.fitSets.screens, forward, cam.fov, aspect, cam.margin, world.tmp.fitA, world.tmp);
+  const centre = { x: world.tmp.fitA.dot(world.tmp.right), y: world.tmp.fitA.dot(world.tmp.up) };
+  fitCamera(world.fitSets.all, forward, cam.fov, aspect, cam.margin, world.tmp.camPos, world.tmp, centre);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -996,36 +991,43 @@ function applyTier(world, index, coarse) {
   void coarse;
 }
 
-// A standing adult built from rounded primitives, proportioned for a 1.78 m
-// figure and scaled to `height`. Faces +Z, feet on y = 0.
+// A standing adult, proportioned for a 1.78 m figure and scaled to `height`.
+// Torso, limbs and neck are lathed from smooth spline profiles, so each is one
+// continuous tapered surface rather than a stack of joints. Faces +Z, feet on y = 0.
 function buildPerson(height, cloth, skin, trackG) {
   const s = height / 1.78;
   const root = new THREE.Group();
   const body = new THREE.Group();
   body.scale.setScalar(s);
   root.add(body);
-  const add = (geo, material, [x, y, z], { rx = 0, rz = 0, scale } = {}) => {
+  const add = (geo, material, [x, y, z], { rx = 0, scale } = {}) => {
     const mesh = new THREE.Mesh(trackG(geo), material);
     mesh.position.set(x, y, z);
-    mesh.rotation.set(rx, 0, rz);
+    mesh.rotation.x = rx;
     if (scale) mesh.scale.set(scale[0], scale[1], scale[2]);
     body.add(mesh);
     return mesh;
   };
-  const capsule = (radius, length) => new THREE.CapsuleGeometry(radius, length, 6, 14);
+  // Profile is [radius, y] pairs from bottom to top.
+  const lathe = (profile) => {
+    const curve = new THREE.SplineCurve(profile.map(([r, y]) => new THREE.Vector2(r, y)));
+    return new THREE.LatheGeometry(curve.getPoints(64), 40);
+  };
+
+  const leg = [[0, 0.07], [0.038, 0.075], [0.042, 0.11], [0.05, 0.2], [0.058, 0.32], [0.05, 0.48], [0.058, 0.56], [0.075, 0.72], [0.085, 0.86], [0.08, 0.93], [0, 0.95]];
+  const arm = [[0, 0.86], [0.03, 0.87], [0.034, 0.9], [0.04, 1.0], [0.037, 1.1], [0.042, 1.16], [0.05, 1.28], [0.054, 1.38], [0.048, 1.44], [0, 1.47]];
+  const torso = [[0, 0.84], [0.13, 0.86], [0.165, 0.92], [0.17, 0.98], [0.15, 1.08], [0.14, 1.14], [0.155, 1.26], [0.18, 1.38], [0.185, 1.43], [0.15, 1.49], [0.07, 1.52], [0, 1.53]];
+  const neck = [[0, 1.48], [0.05, 1.5], [0.046, 1.56], [0.05, 1.6], [0, 1.62]];
 
   [-1, 1].forEach((side) => {
-    add(capsule(0.05, 0.16), cloth, [side * 0.1, 0.05, 0.05], { rx: Math.PI / 2, scale: [1.1, 1, 0.75] });
-    add(capsule(0.062, 0.34), cloth, [side * 0.1, 0.3, 0], { rz: side * 0.02 });
-    add(capsule(0.075, 0.34), cloth, [side * 0.1, 0.7, 0], { rz: side * -0.02 });
-    add(capsule(0.052, 0.22), cloth, [side * 0.235, 1.3, 0], { rz: side * 0.09 });
-    add(capsule(0.044, 0.22), cloth, [side * 0.255, 1.03, 0.025], { rx: -0.14, rz: side * 0.03 });
-    add(new THREE.SphereGeometry(0.048, 14, 10), skin, [side * 0.258, 0.85, 0.05], { scale: [0.8, 1.2, 1] });
+    add(new THREE.CapsuleGeometry(0.045, 0.17, 10, 24), cloth, [side * 0.095, 0.045, 0.05], { rx: Math.PI / 2, scale: [1.05, 1, 0.75] });
+    add(lathe(leg), cloth, [side * 0.095, 0, 0]);
+    add(lathe(arm), cloth, [side * 0.225, 0, 0]);
+    add(new THREE.SphereGeometry(0.045, 32, 24), skin, [side * 0.228, 0.82, 0], { scale: [0.75, 1.3, 0.95] });
   });
-  add(capsule(0.13, 0.14), cloth, [0, 0.93, 0], { rz: Math.PI / 2, scale: [1, 1, 0.7] });
-  add(capsule(0.17, 0.3), cloth, [0, 1.2, 0], { scale: [1.12, 1, 0.62] });
-  add(new THREE.CylinderGeometry(0.048, 0.056, 0.12, 14), skin, [0, 1.52, 0.005]);
-  add(new THREE.SphereGeometry(0.1, 24, 18), skin, [0, 1.665, 0.01], { scale: [0.88, 1.13, 1] });
+  add(lathe(torso), cloth, [0, 0, 0], { scale: [1.08, 1, 0.62] });
+  add(lathe(neck), skin, [0, 0, 0]);
+  add(new THREE.SphereGeometry(0.1, 48, 32), skin, [0, 1.67, 0], { scale: [0.86, 1.12, 0.98] });
   return { root, height };
 }
 

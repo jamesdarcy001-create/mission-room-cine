@@ -585,14 +585,15 @@ function scratchFor(surface) {
   return surface.scratch;
 }
 
-export function paintSurfaces(surfaces, story) {
+// `only` limits the repaint to the named surfaces ("left", "right", "overlay").
+export function paintSurfaces(surfaces, story, only) {
   const blend = story.reset;
   const jobs = [
-    [surfaces.left, paintLeft],
-    [surfaces.right, paintRight],
-    [surfaces.overlay, paintOverlay],
-  ];
-  jobs.forEach(([surface, painter]) => {
+    ["left", surfaces.left, paintLeft],
+    ["right", surfaces.right, paintRight],
+    ["overlay", surfaces.overlay, paintOverlay],
+  ].filter(([name]) => !only || only.includes(name));
+  jobs.forEach(([, surface, painter]) => {
     if (blend >= 0.985) {
       painter(surface.ctx, story, true);
       return;
@@ -610,31 +611,39 @@ export function paintSurfaces(surfaces, story) {
   });
 }
 
-export function surfaceDirtyKey(story) {
-  const rise = story.barRise.map((v) => v.toFixed(3)).join(",");
-  return [
-    story.beat,
-    story.quant,
-    story.bg.toFixed(3),
-    story.eyebrow.toFixed(3),
-    rise,
-    story.curveDraw.toFixed(3),
-    story.kpiFrame.toFixed(3),
-    story.kpiCount.toFixed(3),
-    story.highlight.toFixed(3),
-    story.shift.toFixed(3),
-    story.succ.map((v) => v.toFixed(3)).join(","),
-    story.resequence.toFixed(3),
-    story.dateRoll.toFixed(3),
-    story.spiRoll.toFixed(3),
-    story.forecastReveal.toFixed(3),
-    story.rowFlash.toFixed(3),
-    story.pop.toFixed(3),
-    story.status.toFixed(3),
-    story.reset.toFixed(3),
-    story.cursor.toFixed(3),
-    story.cursorU.toFixed(4),
-    story.cursorV.toFixed(4),
-    Math.floor(story.dotPhase * 8),
-  ].join("|");
+// One key per surface, so a scroll step only repaints (and re-uploads) the
+// screens whose content actually moved. The scramble tick only counts while a
+// scramble is mid-decode; otherwise it would mark every surface dirty on
+// every frame.
+export function surfaceKeys(story) {
+  const f = (v) => v.toFixed(3);
+  const decoding = story.eyebrow > 0 && story.eyebrow < 1;
+  const statusDecoding = story.status > 0 && story.status < 1;
+  const shared = [f(story.eyebrow), decoding ? story.quant : "", f(story.reset), Math.floor(story.dotPhase * 8)];
+  return {
+    left: [
+      ...shared,
+      story.barRise.map(f).join(","),
+      f(story.highlight),
+      f(story.rowFlash),
+      f(story.shift),
+      story.succ.map(f).join(","),
+      f(story.cursor),
+      story.cursorU.toFixed(4),
+      story.cursorV.toFixed(4),
+    ].join("|"),
+    right: [
+      ...shared,
+      statusDecoding ? story.quant : "",
+      f(story.curveDraw),
+      f(story.forecastReveal),
+      f(story.kpiFrame),
+      f(story.kpiCount),
+      f(story.pop),
+      f(story.spiRoll),
+      f(story.dateRoll),
+      f(story.status),
+    ].join("|"),
+    overlay: [...shared, f(story.resequence)].join("|"),
+  };
 }

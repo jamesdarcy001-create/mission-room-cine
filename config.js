@@ -74,7 +74,7 @@ export const CONFIG = {
   ],
   storyEnd: 12,
   scrollTrackVh: 320,
-  scrollResponse: 12,
+  scrollResponse: 7,
   posterTime: 6.4,
 
   room: {
@@ -93,8 +93,11 @@ export const CONFIG = {
     bloomStrength: 0.14,
     bloomRadius: 0.35,
     bloomThreshold: 0.96,
-    beamOpacity: 0.11,
-    lensBoost: 3.2,
+    beamOpacity: 0.075,
+    // Kept at or under 1 so the lens reads the same with or without bloom.
+    lensBoost: 0.95,
+    glowSize: 0.42,
+    glowOpacity: 0.6,
   },
 
   screen: {
@@ -102,7 +105,7 @@ export const CONFIG = {
     pxHeight: 1152,
     modelTargetWidth: 1280,
     modelTargetHeight: 720,
-    maxFps: 30,
+    maxFps: 60,
   },
 
   schedule: {
@@ -142,10 +145,6 @@ export const CONFIG = {
     fov: 32,
     yawDeg: 4,
     margin: { x: 0.035, y: 0.07 },
-    // Narrower than this, the camera frames one screen at a time and pans
-    // with the story instead of shrinking the whole room to fit.
-    panBelowAspect: 1.5,
-    marginPan: { x: 0.03, y: 0.05 },
   },
 
   figures: {
@@ -161,8 +160,8 @@ export const CONFIG = {
     tiers: [
       { id: "high", bloom: true, motes: true, dprCap: 2, modelFps: 30 },
       { id: "no-bloom", bloom: false, motes: true, dprCap: 2, modelFps: 30 },
-      { id: "no-atmosphere", bloom: false, motes: false, dprCap: 2, modelFps: 20 },
-      { id: "dpr1", bloom: false, motes: false, dprCap: 1, modelFps: 15 },
+      { id: "no-atmosphere", bloom: false, motes: true, dprCap: 2, modelFps: 20 },
+      { id: "dpr1", bloom: false, motes: true, dprCap: 1, modelFps: 15 },
     ],
   },
 };
