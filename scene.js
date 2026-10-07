@@ -2,7 +2,7 @@ import * as THREE from "https://esm.sh/three@0.186.1";
 import { RectAreaLightUniformsLib } from "https://esm.sh/three@0.186.1/addons/lights/RectAreaLightUniformsLib.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
 import { TDSLoader } from "https://esm.sh/three@0.186.1/addons/loaders/TDSLoader.js";
-import { mergeVertices } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
+import { mergeGeometries, mergeVertices } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
@@ -125,6 +125,7 @@ async function boot(ui) {
 
   let debug;
   if (DEBUG_MODE) {
+    window.__mrcWorld = world;
     debug = document.createElement("div");
     debug.className = "mrc-cine__debug";
     const read = document.createElement("p");
@@ -568,6 +569,9 @@ function createWorld(stage, coarse) {
   shadow.position.y = 0.015;
   presenter.root.add(shadow);
 
+  const audience = createAudience(trackG, trackM);
+  scene.add(audience.root);
+
   const pulseMat = trackM(new THREE.MeshBasicMaterial({
     color: CONFIG.color.accent,
     transparent: true,
@@ -679,10 +683,10 @@ function createWorld(stage, coarse) {
   placePerson(presenter, screens.left.mesh);
   updateMatrices();
 
-  // World-space points the camera must keep in frame. The stems are left out
-  // on purpose: they run up out of shot as if hung from the ceiling.
+  // World-space points the camera must keep in frame, rods included.
   const boxPoints = (object) => {
-    const box = new THREE.Box3().setFromObject(object);
+    // Precise: from the vertices, so the angled wings do not pad the frame.
+    const box = new THREE.Box3().setFromObject(object, true);
     const out = [];
     [box.min.x, box.max.x].forEach((x) => [box.min.y, box.max.y].forEach((y) => [box.min.z, box.max.z].forEach((z) => {
       out.push(new THREE.Vector3(x, y, z));
@@ -691,16 +695,16 @@ function createWorld(stage, coarse) {
   };
   const screenFit = (entry) => {
     const arch = entry.group.userData.arch;
-    return [entry.mesh, arch.plinth, arch.fascia, arch.mount].flatMap(boxPoints);
+    return [entry.mesh, arch.plinth, arch.fascia, arch.mount, arch.stem].flatMap(boxPoints);
   };
   const personFit = boxPoints(presenter.root);
   const fitSets = {
     left: [...screenFit(screens.left), ...personFit],
     centre: screenFit(screens.centre),
     right: screenFit(screens.right),
+    audience: audience.fit.flatMap(boxPoints),
   };
-  fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right];
-  fitSets.screens = [screens.left, screens.centre, screens.right].flatMap((entry) => boxPoints(entry.mesh));
+  fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right, ...fitSets.audience];
   fitSets.each = [screens.left, screens.centre, screens.right].map((entry) => boxPoints(entry.mesh));
 
   const clockVectors = {
@@ -739,6 +743,7 @@ function createWorld(stage, coarse) {
     scene,
     camera,
     presenter,
+    audience,
     screens,
     lights,
     frames,
@@ -954,14 +959,12 @@ function updateCamera(world, story) {
   const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2])
     .normalize()
     .applyAxisAngle(UP, yaw);
-  // Hold the frame on the middle of the three screens, then back off until the
-  // whole setup (person and projectors included) fits around it.
+  // Fit the whole setup (person, rods and projectors included) tightly to the
+  // box, so it fills the space instead of centring on the middle screen.
   // A slow push-in: a little extra margin at the start that settles out by the end.
   const push = cam.pushIn * (1 - ease.sine(u));
   const margin = { x: cam.margin.x + push, y: cam.margin.y + push };
-  fitCamera(world.fitSets.screens, forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
-  const centre = { x: world.tmp.fitA.dot(world.tmp.right), y: world.tmp.fitA.dot(world.tmp.up) };
-  fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp, centre);
+  fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -991,7 +994,7 @@ function applyTier(world, index, coarse) {
 
 // The scale figure: a low-poly man (models/lowpolyman.3ds). The file is
 // Z-up in centimetres, so it is stood upright, its feet put on the floor and
-// it is scaled to `height`, arms lowered and recoloured to the room's graphite. It loads
+// it is scaled to `height`, arms lowered and shaded with a light gradient. It loads
 // after the scene is up; until then an invisible proxy of the same size keeps
 // the camera fit stable, so the frame does not jump when it arrives.
 // Faces +Z, feet on y = 0.
@@ -1001,14 +1004,23 @@ function createPerson(height, trackG, trackM) {
   proxy.position.y = height / 2;
   proxy.visible = false;
   root.add(proxy);
-  // Dark so it sits back in the room: it is there for scale, not attention.
+  // A light vertical gradient (vertex colours), part lit and part glow, so the
+  // figure reads against the dark room without competing with the screens.
+  const { glow } = CONFIG.figures.presenter.shade;
   const body = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite800,
-    emissive: CONFIG.color.graphite900,
-    emissiveIntensity: 0.25,
+    color: 0xffffff,
+    vertexColors: true,
+    emissive: 0xffffff,
+    emissiveIntensity: glow,
     roughness: 0.7,
     metalness: 0.05,
   }));
+  body.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <emissivemap_fragment>",
+      "#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vColor.rgb;",
+    );
+  };
   const person = { root, height, loaded: [] };
   person.dispose = () => {
     person.loaded.forEach((geo) => geo.dispose());
@@ -1018,7 +1030,7 @@ function createPerson(height, trackG, trackM) {
       if (!node.isMesh) return;
       node.material.dispose?.();
       node.material = body;
-      node.geometry = smoothPerson(smoothHead(narrowShoulders(straightenForearms(lowerArms(node.geometry)))));
+      node.geometry = shadePerson(smoothPerson(smoothHead(narrowShoulders(straightenForearms(lowerArms(node.geometry))))));
       person.loaded.push(node.geometry);
     });
     const upright = new THREE.Group();
@@ -1180,6 +1192,151 @@ function smoothHead(geometry) {
 
 // Weld duplicate vertices so normals average across faces: smooth shading
 // instead of visible facets.
+// Feet-to-head colour gradient along the file's Z (up) axis.
+function shadePerson(geometry) {
+  const { feet, head } = CONFIG.figures.presenter.shade;
+  const lo = new THREE.Color(CONFIG.color[feet]);
+  const hi = new THREE.Color(CONFIG.color[head]);
+  const pos = geometry.attributes.position;
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  const span = Math.max(0.001, max.z - min.z);
+  const colors = new Float32Array(pos.count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i += 1) {
+    c.copy(lo).lerp(hi, (pos.getZ(i) - min.z) / span);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return geometry;
+}
+
+// A standard material with a vertical colour gradient and an alpha fade, both
+// on world height: transparent at fade.from, solid by fade.to, so a shape
+// dissolves downward instead of ending at an edge.
+function fadeMaterial(trackM, { low, high, glow, fade, gradient, roughness = 0.7, metalness = 0.05 }) {
+  const uniforms = {
+    uLow: { value: new THREE.Color(CONFIG.color[low]) },
+    uHigh: { value: new THREE.Color(CONFIG.color[high]) },
+    uFade: { value: new THREE.Vector4(fade.from, fade.to, gradient[0], gradient[1]) },
+  };
+  const material = trackM(new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xffffff,
+    emissiveIntensity: glow,
+    roughness,
+    metalness,
+    transparent: true,
+  }));
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = "varying float vFadeY;\n" + shader.vertexShader.replace(
+      "#include <project_vertex>",
+      "#include <project_vertex>\n  vFadeY = (modelMatrix * vec4(transformed, 1.0)).y;",
+    );
+    shader.fragmentShader = "uniform vec3 uLow;\nuniform vec3 uHigh;\nuniform vec4 uFade;\nvarying float vFadeY;\n" + shader.fragmentShader
+      .replace(
+        "#include <color_fragment>",
+        "#include <color_fragment>\n  vec3 fadeTint = mix(uLow, uHigh, smoothstep(uFade.z, uFade.w, vFadeY));\n  diffuseColor.rgb *= fadeTint;\n  diffuseColor.a *= smoothstep(uFade.x, uFade.y, vFadeY);",
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\n  totalEmissiveRadiance *= fadeTint;",
+      );
+  };
+  material.customProgramCacheKey = () => "mrc-fade";
+  return material;
+}
+
+// One seated person from behind: a smooth lathed torso (elliptical, wider than
+// deep) with a neck, and a head. Metres, base at y = 0, facing -Z.
+function bustGeometry(trackG) {
+  const profile = new THREE.SplineCurve([
+    [0.2, 0], [0.212, 0.16], [0.222, 0.29], [0.214, 0.355], [0.186, 0.4],
+    [0.135, 0.43], [0.08, 0.448], [0.056, 0.468], [0.052, 0.53],
+  ].map(([r, y]) => new THREE.Vector2(r, y))).getPoints(48);
+  const torso = new THREE.LatheGeometry(profile, 64);
+  torso.scale(1, 1, 0.56);
+  const head = new THREE.SphereGeometry(0.097, 48, 32);
+  head.scale(0.92, 1.12, 1);
+  head.translate(0, 0.635, 0.008);
+  const merged = mergeGeometries([torso.toNonIndexed(), head.toNonIndexed()]);
+  torso.dispose();
+  head.dispose();
+  merged.computeVertexNormals();
+  return trackG(merged);
+}
+
+// Five people on the near side of an elliptical table, all facing the screens.
+// The seats follow the table's curve, so the outer people sit a little further
+// back and turn slightly in toward the centre screen.
+function createAudience(trackG, trackM) {
+  const { count, spacing, seatGap, baseY, fade, shade } = CONFIG.figures.audience;
+  const table = CONFIG.figures.table;
+  const root = new THREE.Group();
+  const fit = [];
+
+  const bodyMat = fadeMaterial(trackM, {
+    low: shade.low,
+    high: shade.high,
+    glow: shade.glow,
+    fade,
+    gradient: [fade.from, baseY + 0.74],
+  });
+  const bust = bustGeometry(trackG);
+  for (let i = 0; i < count; i += 1) {
+    const x = (i - (count - 1) / 2) * spacing;
+    const edge = table.radiusZ * Math.sqrt(Math.max(0, 1 - (x / table.radiusX) ** 2));
+    const person = new THREE.Mesh(bust, bodyMat);
+    person.position.set(x, baseY, table.z + edge + seatGap);
+    // Face the screens, turned a little in toward the centre. lookAt aims +Z
+    // at the target and the bust faces -Z, so aim at the mirrored point.
+    person.lookAt(2 * x - x * 0.35, baseY, 2 * person.position.z);
+    person.renderOrder = 2;
+    root.add(person);
+    fit.push(person);
+  }
+
+  // Table: a thin elliptical top with a crisp lighter edge, a satin finish that
+  // picks up the screens, and a pedestal that fades out toward the floor.
+  const topMat = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite900,
+    roughness: 0.62,
+    metalness: 0.1,
+  }));
+  const edgeMat = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite500,
+    emissive: CONFIG.color.graphite500,
+    emissiveIntensity: 0.6,
+    roughness: 0.5,
+    metalness: 0.2,
+  }));
+  const top = new THREE.Mesh(trackG(new THREE.CylinderGeometry(1, 1, table.thickness, 96)), topMat);
+  top.scale.set(table.radiusX, 1, table.radiusZ);
+  top.position.set(0, table.top - table.thickness / 2, table.z);
+  const edge = new THREE.Mesh(trackG(new THREE.TorusGeometry(1, 0.006, 8, 128)), edgeMat);
+  edge.rotation.x = Math.PI / 2;
+  edge.scale.set(table.radiusX, table.radiusZ, 1);
+  edge.position.set(0, table.top, table.z);
+  const pedestalMat = fadeMaterial(trackM, {
+    low: "graphite800",
+    high: "graphite700",
+    glow: 0.05,
+    fade: table.fade,
+    gradient: [table.fade.from, table.top],
+    roughness: 0.4,
+    metalness: 0.3,
+  });
+  const pedestal = new THREE.Mesh(trackG(new THREE.CylinderGeometry(0.16, 0.22, table.top - table.thickness, 48, 1, true)), pedestalMat);
+  pedestal.position.set(0, (table.top - table.thickness) / 2, table.z);
+  pedestal.renderOrder = 1;
+  root.add(top, edge, pedestal);
+  fit.push(top);
+  return { root, fit };
+}
+
 function smoothPerson(geometry) {
   const bare = new THREE.BufferGeometry();
   bare.setAttribute("position", geometry.attributes.position);

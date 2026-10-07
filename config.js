@@ -100,8 +100,8 @@ export const CONFIG = {
     exposure: 1.05,
     beamOpacity: 0.075,
     // Projector height above the screen tops, and where their rods end.
-    projectorRise: 0.42,
-    ceilingRise: 1.41,
+    projectorRise: 0.36,
+    ceilingRise: 0.66,
     lensBoost: 0.95,
     glowSize: 0.42,
     glowOpacity: 0.6,
@@ -151,7 +151,7 @@ export const CONFIG = {
   camera: {
     // View direction is fixed; distance and framing are solved every frame so
     // the setup fills whatever box the scene is given (see fitCamera).
-    direction: [-0.1, -0.54, -9.27],
+    direction: [-0.1, -1.3, -9.27],
     fov: 32,
     yawDeg: 3,
     swayPeriod: 22,
@@ -174,6 +174,34 @@ export const CONFIG = {
       head: { centre: [0, 12.5, 66], radii: [7.8, 8.9, 10.4], neck: { y: 13, radius: 5.4, from: 46, to: 58 } },
       // Taubin smoothing passes over the whole body.
       smoothing: 4,
+      // Vertical gradient, feet to head (CONFIG.color keys), and how much of it
+      // glows so the figure reads light against the dark room.
+      shade: { feet: "graphite600", head: "sand300", glow: 0.18 },
+    },
+    // Five seated people seen from behind, on the near side of a table, facing
+    // the screens. Busts only: each body fades out below the shoulders.
+    // Distances are metres in front of the centre screen (z) and above the
+    // floor (y). They sit in the dark band under the screens and are checked
+    // not to overlap any screen (see ?debug).
+    audience: {
+      count: 5,
+      spacing: 0.7,
+      // Gap between the table's near edge and each person's back.
+      seatGap: 0.3,
+      // Bust base height; the bust is about 0.74 m tall (head top ~ base + 0.74).
+      baseY: 0.56,
+      // World heights: fully transparent at `from`, solid at `to`.
+      fade: { from: 0.58, to: 0.86 },
+      shade: { low: "graphite600", high: "sand300", glow: 0.16 },
+    },
+    table: {
+      z: 3.4,
+      radiusX: 1.85,
+      radiusZ: 0.52,
+      top: 0.72,
+      thickness: 0.04,
+      // The pedestal fades out toward the floor.
+      fade: { from: 0.2, to: 0.66 },
     },
   },
 
