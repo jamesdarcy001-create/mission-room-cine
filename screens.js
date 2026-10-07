@@ -374,6 +374,14 @@ function pixelAdvance(dot, gap) {
   return 5 * (dot + gap) + dot * 1.6;
 }
 
+// Largest whole dot size (up to `max`) at which `chars` pixel glyphs fit in `width`.
+function fitDot(chars, width, gap, max) {
+  for (let dot = max; dot > 3; dot -= 1) {
+    if (chars * pixelAdvance(dot, gap) - dot * 1.6 <= width) return dot;
+  }
+  return 3;
+}
+
 function drawPixelString(ctx, text, x, y, dot, gap, color) {
   ctx.fillStyle = color;
   let cursor = x;
@@ -466,8 +474,12 @@ function drawKpis(ctx, story, baseline) {
       ctx.restore();
       return;
     }
-    const dot = card.kind === "date" ? 8 : 11;
     const gapPx = 3;
+    // The date is the longest value; size its dots so it fits inside the card
+    // with padding on both sides, even at the 8% pop overshoot.
+    const dot = card.kind === "date"
+      ? fitDot(Math.max(CONFIG.performance.dateBase.length, CONFIG.performance.dateNext.length), (w - 56) / 1.08, gapPx, 8)
+      : 11;
     const color = card.kind === "cpi" ? C.graphite400 : C.accent;
     if (card.kind === "spi") {
       const counted = CONFIG.performance.spiBase * (baseline ? 1 : Math.max(story.kpiCount, 0.001));
@@ -482,7 +494,9 @@ function drawKpis(ctx, story, baseline) {
       const from = CONFIG.performance.dateBase;
       const to = CONFIG.performance.dateNext;
       const roll = baseline ? 0 : story.dateRoll;
-      drawPixelRoller(ctx, from, to, roll, x + 28, y + 86, dot, gapPx, C.accent);
+      // Centred on the same line as the 11-dot SPI and CPI numerals.
+      const top = y + 78 + (7 * (11 + gapPx) - 7 * (dot + gapPx)) / 2;
+      drawPixelRoller(ctx, from, to, roll, x + 28, top, dot, gapPx, C.accent);
     }
     ctx.restore();
   });

@@ -148,7 +148,9 @@ async function boot(ui) {
     }
     const aspect = POSTER_MODE ? 16 / 9 : cssW / cssH;
     world.camera.aspect = aspect;
-    world.view = { cssW, cssH, aspect, portrait: cssW < 768 || cssH > cssW };
+    // Portrait viewports (phones) get the guided camera tour; see tourCamera.
+    const tour = !POSTER_MODE && window.innerWidth <= window.innerHeight;
+    world.view = { cssW, cssH, aspect, portrait: cssW < 768 || cssH > cssW, tour };
     world.camera.updateProjectionMatrix();
     pinBox.top = parseFloat(getComputedStyle(ui.pin).top) || 0;
     pinBox.height = ui.pin.offsetHeight || window.innerHeight;
@@ -198,10 +200,16 @@ async function boot(ui) {
       // the pin's sticky offset until the track's bottom releases the pin. On
       // desktop that is top 0 and a full-height pin; on portrait the pin sits
       // mid-viewport, and measuring from the viewport top left dead zones.
+      // Clamped to the scroll range the page can actually reach, so the story
+      // still starts at 0 and finishes at 1 when the segment is the first or
+      // last thing on a page (otherwise a mid-viewport pin can't get there).
       const rect = ui.el.getBoundingClientRect();
-      const travel = Math.max(1, ui.el.offsetHeight - pinBox.height);
-      const scrolled = Math.min(travel, Math.max(0, pinBox.top - rect.top));
-      const target = scrolled / travel;
+      const scrollY = window.scrollY;
+      const elTop = rect.top + scrollY;
+      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const start = Math.max(0, elTop - pinBox.top);
+      const end = Math.min(maxScroll, elTop + ui.el.offsetHeight - pinBox.height - pinBox.top);
+      const target = Math.min(1, Math.max(0, (scrollY - start) / Math.max(1, end - start)));
       // Start where the reader already is, so a reload mid-page does not replay
       // the whole story through the spring.
       if (!primed) {
@@ -364,18 +372,18 @@ function createWorld(stage, coarse) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = CONFIG.room.exposure;
-  renderer.setClearColor(CONFIG.color.graphite950, 1);
+  renderer.setClearColor(CONFIG.color.stone, 1);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(CONFIG.color.graphite950);
-  scene.fog = new THREE.FogExp2(CONFIG.color.graphite950, CONFIG.room.fogDensity);
+  scene.background = new THREE.Color(CONFIG.color.stone);
+  scene.fog = new THREE.FogExp2(CONFIG.color.stone, CONFIG.room.fogDensity);
   const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.08, 80);
   scene.add(new THREE.AmbientLight(CONFIG.color.graphite800, CONFIG.room.ambient));
-  const hemi = new THREE.HemisphereLight(CONFIG.color.graphite700, CONFIG.color.graphite950, CONFIG.room.hemi);
+  const hemi = new THREE.HemisphereLight(CONFIG.color.graphite700, CONFIG.color.stoneFloor, CONFIG.room.hemi);
   scene.add(hemi);
 
   const floorGeo = trackG(new THREE.PlaneGeometry(26, 26));
   const floorMat = trackM(new THREE.MeshBasicMaterial({
-    color: CONFIG.color.graphite925,
+    color: CONFIG.color.stoneFloor,
   }));
   const floor = new THREE.Mesh(floorGeo, floorMat);
   floor.rotation.x = -Math.PI / 2;
@@ -739,6 +747,7 @@ function createWorld(stage, coarse) {
   };
   fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right];
   fitSets.screens = [screens.left, screens.centre, screens.right].flatMap((entry) => boxPoints(entry.mesh));
+  fitSets.each = [screens.left, screens.centre, screens.right].map((entry) => boxPoints(entry.mesh));
 
   const clockVectors = {
     tip: new THREE.Vector3(),
@@ -995,6 +1004,7 @@ function updateCamera(world, story) {
   fitCamera(world.fitSets.screens, forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
   const centre = { x: world.tmp.fitA.dot(world.tmp.right), y: world.tmp.fitA.dot(world.tmp.up) };
   fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp, centre);
+  if (world.view.tour) tourCamera(world, story, forward, aspect);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -1003,6 +1013,23 @@ function updateCamera(world, story) {
   }
 }
 
+// Phones: the whole room is too small to read at phone width, so the camera
+// tours the story. It opens on the full setup, pushes in to the left screen
+// for the edit, follows the pulse across to the right screen, then pulls back
+// to the full setup for the confirm. Each step eases, and all of it is driven
+// by scroll position, so it scrubs both ways.
+function tourCamera(world, story, forward, aspect) {
+  const { zoomIn, across, zoomOut, margin } = CONFIG.camera.tour;
+  const t = story.t;
+  const zoom = smoothstep(zoomIn[0], zoomIn[1], t) * (1 - smoothstep(zoomOut[0], zoomOut[1], t));
+  if (zoom <= 0) return;
+  const focus = 2 * smoothstep(across[0], across[1], t);
+  const lo = Math.min(1, Math.floor(focus));
+  fitCamera(world.fitSets.each[lo], forward, CONFIG.camera.fov, aspect, margin, world.tmp.fitB, world.tmp);
+  fitCamera(world.fitSets.each[lo + 1], forward, CONFIG.camera.fov, aspect, margin, world.tmp.fitC, world.tmp);
+  world.tmp.fitB.lerp(world.tmp.fitC, focus - lo);
+  world.tmp.camPos.lerp(world.tmp.fitB, zoom);
+}
 function renderModel(world) {
   const previous = world.renderer.toneMapping;
   world.renderer.toneMapping = THREE.NoToneMapping;
@@ -1011,7 +1038,7 @@ function renderModel(world) {
   world.renderer.clear(true, true, true);
   world.renderer.render(world.model.scene, world.modelCamera);
   world.renderer.setRenderTarget(null);
-  world.renderer.setClearColor(CONFIG.color.graphite950, 1);
+  world.renderer.setClearColor(CONFIG.color.stone, 1);
   world.renderer.toneMapping = previous;
 }
 

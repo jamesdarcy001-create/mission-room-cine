@@ -10,6 +10,9 @@ export const CONFIG = {
   quietLine: "BASELINE HELD · CRITICAL PATH CLEAR",
 
   color: {
+    // Room: a dark warm stone behind the setup, and a deeper stone floor.
+    stone: "#3a3733",
+    stoneFloor: "#2b2926",
     graphite950: "#1b1b1b",
     graphite925: "#1f1f1f",
     graphite900: "#202020",
@@ -149,6 +152,9 @@ export const CONFIG = {
     yawDeg: 4,
     margin: { x: 0.035, y: 0.07 },
     pushIn: 0.05,
+    // Phone tour, in story seconds (see tourCamera). Edit beat 5.15-7.7,
+    // propagate 7.7-10.15, confirm from 10.15.
+    tour: { zoomIn: [4.3, 5.3], across: [7.8, 9.2], zoomOut: [10.4, 11.5], margin: { x: 0.03, y: 0.06 } },
   },
 
   figures: {
