@@ -1,9 +1,5 @@
 import * as THREE from "https://esm.sh/three@0.186.1";
 import { RectAreaLightUniformsLib } from "https://esm.sh/three@0.186.1/addons/lights/RectAreaLightUniformsLib.js";
-import { EffectComposer } from "https://esm.sh/three@0.186.1/addons/postprocessing/EffectComposer.js";
-import { RenderPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
 import { TDSLoader } from "https://esm.sh/three@0.186.1/addons/loaders/TDSLoader.js";
 import { mergeVertices } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
@@ -11,7 +7,6 @@ import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
 
-const POSTER_URL = new URL("./poster.webp", import.meta.url).href;
 const PERSON_URL = new URL("./models/lowpolyman.3ds", import.meta.url).href;
 const params = new URLSearchParams(window.location.search);
 const POSTER_MODE = params.has("poster");
@@ -29,6 +24,21 @@ export function mountAll() {
   });
 }
 
+// Auto-play timeline. The full story (power on, populate, select, edit,
+// propagate, confirm) plays once. After a hold on the confirmed state, the
+// screens crossfade back to the unedited, populated state (story.reset) and
+// the change sequence replays from `loop.from`, forever. The populated state
+// at `loop.from` is what the fade lands on, so the restart is seamless.
+function storyClock(elapsed) {
+  const end = CONFIG.storyEnd;
+  const { from, hold, fade } = CONFIG.loop;
+  if (elapsed <= end + hold) return { t: Math.min(elapsed, end), reset: 0 };
+  const length = fade + (end - from) + hold;
+  const p = (elapsed - end - hold) % length;
+  if (p < fade) return { t: end, reset: ease.soft(p / fade) };
+  return { t: Math.min(end, from + (p - fade)), reset: 0 };
+}
+
 function hasWebGL() {
   try {
     const canvas = document.createElement("canvas");
@@ -41,23 +51,15 @@ function hasWebGL() {
 function mount(el) {
   const label = el.getAttribute("aria-label") || CONFIG.ariaLabel;
   if (el.getAttribute("role") === "img") el.removeAttribute("role");
-  el.style.height = `${CONFIG.scrollTrackVh}vh`;
-  const pin = document.createElement("div");
-  pin.className = "mrc-cine__pin";
+  // The segment is a transparent box that sizes to its container (see
+  // cine.css); the scene fits itself inside whatever size that is.
   const stage = document.createElement("div");
   stage.className = "mrc-cine__stage";
   stage.setAttribute("role", "img");
   stage.setAttribute("aria-label", label);
-  const fallback = document.createElement("div");
-  fallback.className = "mrc-cine__fallback";
-  fallback.style.backgroundImage = `url("${POSTER_URL}")`;
-  const vignette = document.createElement("div");
-  vignette.className = "mrc-cine__vignette";
-  stage.append(fallback, vignette);
-  pin.append(stage);
-  el.append(pin);
+  el.append(stage);
 
-  const ui = { el, pin, stage, fallback, onScreen: false, started: false, destroyed: false };
+  const ui = { el, stage, onScreen: false, started: false, destroyed: false };
   if (!hasWebGL()) return;
 
   const io = new IntersectionObserver((entries) => {
@@ -92,19 +94,19 @@ async function boot(ui) {
   const coarse = window.matchMedia("(pointer: coarse)").matches;
   const world = createWorld(ui.stage, coarse);
   const story = createStoryState();
-  let smooth = POSTER_MODE ? CONFIG.posterTime / CONFIG.storyEnd : 0;
-  let t = smooth * CONFIG.storyEnd;
+  // Auto-play clock (seconds since the scene started running). Reduced motion
+  // shows the confirmed end state, still.
+  let elapsed = POSTER_MODE ? CONFIG.posterTime : reduce ? CONFIG.storyEnd : 0;
+  // Debug only: ?debug&at=9 starts the clock at story second 9.
+  if (DEBUG_MODE && params.has("at")) elapsed = parseFloat(params.get("at")) || 0;
+  let t = elapsed;
   let tierIndex = Math.max(0, CONFIG.quality.tiers.findIndex((tier) => tier.id === QUALITY_LOCK));
   let raf = 0;
   let last = performance.now();
   let paintAcc = 1;
-  let velocity = 0;
-  let primed = false;
-  const pinBox = { top: 0, height: window.innerHeight };
   let paintKeys = surfaceKeys(story);
   let lightAcc = 0;
   let destroyed = false;
-  let revealed = false;
   let posterFrames = 0;
   let posterSent = false;
   const bootAt = performance.now();
@@ -127,7 +129,7 @@ async function boot(ui) {
     debug.className = "mrc-cine__debug";
     const read = document.createElement("p");
     debug.append(read);
-    ui.pin.appendChild(debug);
+    ui.stage.appendChild(debug);
     debug.read = read;
   }
 
@@ -142,28 +144,17 @@ async function boot(ui) {
     const bufH = POSTER_MODE ? 1080 : Math.round(cssH * dpr);
     world.renderer.setPixelRatio(1);
     world.renderer.setSize(bufW, bufH, false);
-    if (world.composer) {
-      world.composer.setPixelRatio(1);
-      world.composer.setSize(bufW, bufH);
-    }
     const aspect = POSTER_MODE ? 16 / 9 : cssW / cssH;
     world.camera.aspect = aspect;
-    // Portrait viewports (phones) get the guided camera tour; see tourCamera.
-    const tour = !POSTER_MODE && window.innerWidth <= window.innerHeight;
-    world.view = { cssW, cssH, aspect, portrait: cssW < 768 || cssH > cssW, tour };
+    world.view = { cssW, cssH, aspect };
     world.camera.updateProjectionMatrix();
-    pinBox.top = parseFloat(getComputedStyle(ui.pin).top) || 0;
-    pinBox.height = ui.pin.offsetHeight || window.innerHeight;
   };
   const ro = new ResizeObserver(resize);
   ro.observe(ui.stage);
-  window.addEventListener("resize", resize);
   resize();
 
   const onLost = (event) => {
     event.preventDefault();
-    ui.fallback.classList.remove("is-hidden");
-    revealed = false;
   };
   const onRestored = () => {
     if (destroyed) return;
@@ -195,49 +186,11 @@ async function boot(ui) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     world.time += dt;
-    if (!POSTER_MODE) {
-      // Progress runs while the stage is pinned: from the track's top reaching
-      // the pin's sticky offset until the track's bottom releases the pin. On
-      // desktop that is top 0 and a full-height pin; on portrait the pin sits
-      // mid-viewport, and measuring from the viewport top left dead zones.
-      // Clamped to the scroll range the page can actually reach, so the story
-      // still starts at 0 and finishes at 1 when the segment is the first or
-      // last thing on a page (otherwise a mid-viewport pin can't get there).
-      const rect = ui.el.getBoundingClientRect();
-      const scrollY = window.scrollY;
-      const elTop = rect.top + scrollY;
-      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-      const start = Math.max(0, elTop - pinBox.top);
-      const end = Math.min(maxScroll, elTop + ui.el.offsetHeight - pinBox.height - pinBox.top);
-      const target = Math.min(1, Math.max(0, (scrollY - start) / Math.max(1, end - start)));
-      // Start where the reader already is, so a reload mid-page does not replay
-      // the whole story through the spring.
-      if (!primed) {
-        smooth = target;
-        primed = true;
-      }
-      if (reduce) {
-        smooth = target;
-        velocity = 0;
-      } else {
-        // Critically damped spring: a little carry after a flick, a soft
-        // landing, no overshoot. Substepped so a slow frame stays stable.
-        const k = CONFIG.scroll.stiffness;
-        const c = 2 * Math.sqrt(k) * CONFIG.scroll.damping;
-        const h = dt / 4;
-        for (let i = 0; i < 4; i += 1) {
-          velocity += (k * (target - smooth) - c * velocity) * h;
-          smooth += velocity * h;
-        }
-        smooth = Math.min(1, Math.max(0, smooth));
-        if (Math.abs(target - smooth) < 0.0002 && Math.abs(velocity) < 0.002) {
-          smooth = target;
-          velocity = 0;
-        }
-      }
-    }
-    t = smooth * CONFIG.storyEnd;
+    if (!POSTER_MODE && !reduce) elapsed += dt;
+    const clock = storyClock(elapsed);
+    t = clock.t;
     sampleStory(t, t, story);
+    story.reset = clock.reset;
     const point = editCanvasPoint(story, false);
     story.cursorU = point.u;
     story.cursorV = point.v;
@@ -271,12 +224,7 @@ async function boot(ui) {
     updatePulse(world, story);
     updateCamera(world, story);
     renderModel(world);
-    if (CONFIG.quality.tiers[tierIndex].bloom && world.composer) world.composer.render();
-    else world.renderer.render(world.scene, world.camera);
-    if (!revealed) {
-      revealed = true;
-      ui.fallback.classList.add("is-hidden");
-    }
+    world.renderer.render(world.scene, world.camera);
     if (POSTER_MODE) capturePoster(world);
     if (debug) {
       const fps = dt > 0 ? Math.round(1 / dt) : 0;
@@ -327,7 +275,6 @@ async function boot(ui) {
     ui.destroyed = true;
     cancelAnimationFrame(raf);
     ro.disconnect();
-    window.removeEventListener("resize", resize);
     ui.io.disconnect();
     document.removeEventListener("visibilitychange", onVis);
     world.renderer.domElement.removeEventListener("webglcontextlost", onLost);
@@ -337,7 +284,6 @@ async function boot(ui) {
     disposables.mat.forEach((mat) => mat.dispose());
     disposables.tex.forEach((tex) => tex.dispose());
     world.modelTarget.dispose();
-    if (world.composer) world.composer.dispose();
     world.renderer.dispose();
     world.renderer.forceContextLoss();
     world.renderer.domElement.remove();
@@ -364,7 +310,7 @@ function createWorld(stage, coarse) {
   };
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    alpha: false,
+    alpha: true,
     powerPreference: "default",
     stencil: false,
     failIfMajorPerformanceCaveat: false,
@@ -372,22 +318,14 @@ function createWorld(stage, coarse) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = CONFIG.room.exposure;
-  renderer.setClearColor(CONFIG.color.stone, 1);
+  // Transparent: the host page shows through; there is no backdrop or floor.
+  renderer.setClearColor(0x000000, 0);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(CONFIG.color.stone);
-  scene.fog = new THREE.FogExp2(CONFIG.color.stone, CONFIG.room.fogDensity);
   const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.08, 80);
   scene.add(new THREE.AmbientLight(CONFIG.color.graphite800, CONFIG.room.ambient));
   const hemi = new THREE.HemisphereLight(CONFIG.color.graphite700, CONFIG.color.stoneFloor, CONFIG.room.hemi);
   scene.add(hemi);
 
-  const floorGeo = trackG(new THREE.PlaneGeometry(26, 26));
-  const floorMat = trackM(new THREE.MeshBasicMaterial({
-    color: CONFIG.color.stoneFloor,
-  }));
-  const floor = new THREE.Mesh(floorGeo, floorMat);
-  floor.rotation.x = -Math.PI / 2;
-  scene.add(floor);
 
   const panelW = CONFIG.room.panelWidth;
   const panelH = CONFIG.room.panelHeight;
@@ -436,6 +374,7 @@ function createWorld(stage, coarse) {
     toneMapped: true,
   }));
 
+  const backingMat = trackM(new THREE.MeshBasicMaterial({ color: 0x000000 }));
   const frameMat = trackM(new THREE.MeshStandardMaterial({
     color: CONFIG.color.graphite700,
     roughness: 0.46,
@@ -497,6 +436,11 @@ function createWorld(stage, coarse) {
     addEdge("x", panelW, (x0 + x1) / 2, y0);
     addEdge("y", panelH, x0, 0);
     if (side === "centre") {
+      // Opaque backing: the model texture fades in from transparent, and on a
+      // transparent canvas the page would otherwise show through the screen.
+      const backing = new THREE.Mesh(trackG(new THREE.PlaneGeometry(panelW, panelH)), backingMat);
+      backing.position.z = -0.004;
+      group.add(backing);
       const overlay = new THREE.Mesh(trackG(new THREE.PlaneGeometry(panelW, panelH)), overlayMat);
       overlay.position.z = 0.02;
       group.add(overlay);
@@ -558,7 +502,7 @@ function createWorld(stage, coarse) {
     beams.push(mesh);
   });
 
-  // Projector lenses and their glow. Bright enough to cross the bloom threshold.
+  // Projector lenses and their glow.
   const lensMat = trackM(new THREE.MeshBasicMaterial({ color: CONFIG.color.sand200, toneMapped: false }));
   const glowTex = trackT(new THREE.CanvasTexture(glowCanvas()));
   glowTex.colorSpace = THREE.SRGBColorSpace;
@@ -633,11 +577,6 @@ function createWorld(stage, coarse) {
   modelCamera.position.set(0.2, 1.62, 4.85);
   modelCamera.lookAt(0, 0.78, 0);
 
-  const composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), CONFIG.room.bloomStrength, CONFIG.room.bloomRadius, CONFIG.room.bloomThreshold);
-  composer.addPass(bloom);
-  composer.addPass(new OutputPass());
 
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = 32;
@@ -784,9 +723,6 @@ function createWorld(stage, coarse) {
     renderer,
     scene,
     camera,
-    composer,
-    bloom,
-    floor,
     presenter,
     screens,
     lights,
@@ -885,7 +821,7 @@ function updateBeams(world, story) {
     const beam = world.beams[seed.beam];
     const data = beam.userData;
     if (!data?.dir) return;
-    const along = (seed.phase + world.time * CONFIG.room.moteSpeed + story.t * 0.02) % 1;
+    const along = (seed.phase + world.time * CONFIG.room.moteSpeed) % 1;
     world.tmp.mote.copy(data.start).addScaledVector(data.dir, along * data.len);
     world.tmp.tangent.crossVectors(Math.abs(data.dir.y) > 0.85 ? AXIS_X : UP, data.dir).normalize();
     world.tmp.bitangent.crossVectors(data.dir, world.tmp.tangent);
@@ -898,7 +834,8 @@ function updateBeams(world, story) {
 }
 
 function updateModel(world, story) {
-  world.model.root.rotation.y = (story.t / CONFIG.storyEnd) * 0.42 + world.time * CONFIG.model.yawRate;
+  // Continuous turn on the clock, so the loop restart never jumps it.
+  world.model.root.rotation.y = world.time * CONFIG.model.yawRate;
   world.model.levels.forEach((level, index) => {
     const shown = story.modelLevel[index];
     const active = index === CONFIG.model.activeLevel;
@@ -991,8 +928,10 @@ function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp, centre) {
 function updateCamera(world, story) {
   const cam = CONFIG.camera;
   const { aspect } = world.view;
-  const u = THREE.MathUtils.clamp(story.t / CONFIG.storyEnd, 0, 1);
-  const yaw = (u - 0.5) * THREE.MathUtils.degToRad(cam.yawDeg);
+  // Auto-play: a slow sideways sway on the clock, and a gentle push-in over the
+  // intro that then holds. The frame is re-fitted every frame, so it always fits.
+  const u = Math.min(1, world.time / CONFIG.storyEnd);
+  const yaw = Math.sin((world.time / cam.swayPeriod) * Math.PI * 2) * THREE.MathUtils.degToRad(cam.yawDeg) * 0.5;
   const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2])
     .normalize()
     .applyAxisAngle(UP, yaw);
@@ -1004,7 +943,6 @@ function updateCamera(world, story) {
   fitCamera(world.fitSets.screens, forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
   const centre = { x: world.tmp.fitA.dot(world.tmp.right), y: world.tmp.fitA.dot(world.tmp.up) };
   fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp, centre);
-  if (world.view.tour) tourCamera(world, story, forward, aspect);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -1013,23 +951,6 @@ function updateCamera(world, story) {
   }
 }
 
-// Phones: the whole room is too small to read at phone width, so the camera
-// tours the story. It opens on the full setup, pushes in to the left screen
-// for the edit, follows the pulse across to the right screen, then pulls back
-// to the full setup for the confirm. Each step eases, and all of it is driven
-// by scroll position, so it scrubs both ways.
-function tourCamera(world, story, forward, aspect) {
-  const { zoomIn, across, zoomOut, margin } = CONFIG.camera.tour;
-  const t = story.t;
-  const zoom = smoothstep(zoomIn[0], zoomIn[1], t) * (1 - smoothstep(zoomOut[0], zoomOut[1], t));
-  if (zoom <= 0) return;
-  const focus = 2 * smoothstep(across[0], across[1], t);
-  const lo = Math.min(1, Math.floor(focus));
-  fitCamera(world.fitSets.each[lo], forward, CONFIG.camera.fov, aspect, margin, world.tmp.fitB, world.tmp);
-  fitCamera(world.fitSets.each[lo + 1], forward, CONFIG.camera.fov, aspect, margin, world.tmp.fitC, world.tmp);
-  world.tmp.fitB.lerp(world.tmp.fitC, focus - lo);
-  world.tmp.camPos.lerp(world.tmp.fitB, zoom);
-}
 function renderModel(world) {
   const previous = world.renderer.toneMapping;
   world.renderer.toneMapping = THREE.NoToneMapping;
@@ -1038,15 +959,13 @@ function renderModel(world) {
   world.renderer.clear(true, true, true);
   world.renderer.render(world.model.scene, world.modelCamera);
   world.renderer.setRenderTarget(null);
-  world.renderer.setClearColor(CONFIG.color.stone, 1);
+  world.renderer.setClearColor(0x000000, 0);
   world.renderer.toneMapping = previous;
 }
 
 function applyTier(world, index, coarse) {
   const tier = CONFIG.quality.tiers[index];
   world.tier = tier;
-  if (world.bloom) world.bloom.enabled = tier.bloom;
-  world.floor.visible = true;
   world.motes.visible = tier.motes;
   void coarse;
 }

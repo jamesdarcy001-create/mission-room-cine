@@ -4,9 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mission Room CINE</title>
-  <link rel="stylesheet" href="./cine.css?v=scroll">
+  <link rel="stylesheet" href="./cine.css?v=autoplay">
   <style>
-    html, body { margin: 0; background: #3a3733; }
+    /* Preview only: a backdrop like the landing page's, so the transparent
+       segment can be judged in context. The segment itself has no background. */
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4vw;
+      box-sizing: border-box;
+      background: radial-gradient(ellipse at 50% 30%, #4a4644 0%, #2a2827 55%, #1d1c1b 100%);
+    }
+    .mrc-cine { max-width: 1400px; }
   </style>
   <script type="importmap">
   {
@@ -18,7 +30,7 @@
   </script>
 </head>
 <body>
-  <div class="mrc-cine" role="img" aria-label="A darkened theatre with three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room."></div>
+  <div class="mrc-cine" role="img" aria-label="Three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room."></div>
   <script type="module">
   import { mountAll } from "./scene.js";
   mountAll();

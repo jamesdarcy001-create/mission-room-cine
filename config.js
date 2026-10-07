@@ -5,7 +5,7 @@
 export const CONFIG = {
   brandLabel: "MISSION ROOM / CINE",
   ariaLabel:
-    "A darkened theatre with three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room.",
+    "Three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room.",
   statusLine: "RESCHEDULED · 3 SUCCESSORS UPDATED · FORECAST REVISED",
   quietLine: "BASELINE HELD · CRITICAL PATH CLEAR",
 
@@ -76,10 +76,9 @@ export const CONFIG = {
     { name: "CONFIRM", start: 10.15, end: 12 },
   ],
   storyEnd: 12,
-  scrollTrackVh: 320,
-  // Scroll-to-story spring. Higher stiffness follows the scrollbar more tightly;
-  // damping 1 is critical (no overshoot).
-  scroll: { stiffness: 38, damping: 1 },
+  // Auto-play loop (story seconds): after the first full play and a `hold` on
+  // the confirmed state, fade back over `fade` and replay from `from`.
+  loop: { from: 5.0, hold: 2.6, fade: 1.4 },
   posterTime: 6.4,
 
   room: {
@@ -90,16 +89,11 @@ export const CONFIG = {
     wingAngleDeg: 35,
     fasciaHeight: 0.07,
     plinthDepth: 0.32,
-    fogDensity: 0.011,
     ambient: 0.07,
     hemi: 0.09,
     rectIntensity: 14,
     exposure: 1.05,
-    bloomStrength: 0.14,
-    bloomRadius: 0.35,
-    bloomThreshold: 0.96,
     beamOpacity: 0.075,
-    // Kept at or under 1 so the lens reads the same with or without bloom.
     lensBoost: 0.95,
     glowSize: 0.42,
     glowOpacity: 0.6,
@@ -139,7 +133,7 @@ export const CONFIG = {
   },
 
   model: {
-    yawRate: 0.06,
+    yawRate: 0.12,
     levels: 4,
     activeLevel: 3,
   },
@@ -149,12 +143,10 @@ export const CONFIG = {
     // the setup fills whatever box the scene is given (see fitCamera).
     direction: [-0.1, -0.54, -9.27],
     fov: 32,
-    yawDeg: 4,
+    yawDeg: 3,
+    swayPeriod: 22,
     margin: { x: 0.035, y: 0.07 },
     pushIn: 0.05,
-    // Phone tour, in story seconds (see tourCamera). Edit beat 5.15-7.7,
-    // propagate 7.7-10.15, confirm from 10.15.
-    tour: { zoomIn: [4.3, 5.3], across: [7.8, 9.2], zoomOut: [10.4, 11.5], margin: { x: 0.03, y: 0.06 } },
   },
 
   figures: {
@@ -178,10 +170,10 @@ export const CONFIG = {
     slowWindowMs: 2000,
     warmupMs: 3000,
     tiers: [
-      { id: "high", bloom: true, motes: true, dprCap: 2, modelFps: 30 },
-      { id: "no-bloom", bloom: false, motes: true, dprCap: 2, modelFps: 30 },
-      { id: "no-atmosphere", bloom: false, motes: true, dprCap: 2, modelFps: 20 },
-      { id: "dpr1", bloom: false, motes: true, dprCap: 1, modelFps: 15 },
+      { id: "high", motes: true, dprCap: 2, modelFps: 30 },
+      { id: "no-bloom", motes: true, dprCap: 2, modelFps: 30 },
+      { id: "no-atmosphere", motes: true, dprCap: 2, modelFps: 20 },
+      { id: "dpr1", motes: true, dprCap: 1, modelFps: 15 },
     ],
   },
 };
