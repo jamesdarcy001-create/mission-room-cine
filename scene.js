@@ -612,10 +612,12 @@ function createWorld(stage, coarse) {
       arch.fascia.position.set(top.x, CONFIG.room.plinthHeight + panelH + CONFIG.room.fasciaHeight / 2, top.z);
       arch.fascia.rotation.y = group.rotation.y;
       arch.mount.position.copy(center).addScaledVector(normal, 1.15);
-      arch.mount.position.y = CONFIG.room.plinthHeight + panelH + 0.78;
+      arch.mount.position.y = CONFIG.room.plinthHeight + panelH + CONFIG.room.projectorRise;
       arch.mount.lookAt(center);
       arch.stem.position.copy(arch.mount.position);
-      arch.stem.position.y += 0.33;
+      // The rod reaches the same ceiling line however low the projector hangs.
+      arch.stem.scale.y = (CONFIG.room.ceilingRise - CONFIG.room.projectorRise) / 0.6;
+      arch.stem.position.y += (CONFIG.room.ceilingRise - CONFIG.room.projectorRise) / 2 + 0.03;
       arch.mount.updateMatrixWorld(true);
 
       const lens = new THREE.Mesh(lensGeo, (lensMats[index] = trackM(lensMat.clone())));
@@ -1126,33 +1128,27 @@ function narrowShoulders(geometry) {
   pos.needsUpdate = true;
   return geometry;
 }
-// A smooth, featureless head. The model's own head has eye sockets and a mouth
-// cavity; pressing those onto a surface leaves folded triangles. So the head's
-// triangles are dropped and a clean ellipsoid of the same size takes their
-// place. Vertices in the chin/neck band are eased onto that ellipsoid so the
-// neck meets it without a step.
+// A smooth, featureless head on a real neck. The model's own head has eye
+// sockets and a mouth cavity; pressing those onto a surface leaves folded
+// triangles. So everything above the neck top is dropped and a clean, rounded
+// head takes its place. The neck band (jaw and throat in the original) is
+// shaped into a round column that rises out of the shoulders and ends inside
+// the head, so the two join without a seam.
 function smoothHead(geometry) {
-  const { centre, radii, from, to } = CONFIG.figures.presenter.head;
+  const { centre, radii, neck } = CONFIG.figures.presenter.head;
   const pos = geometry.attributes.position;
   const above = new Uint8Array(pos.count);
-  for (let i = 0; i < pos.count; i += 1) above[i] = pos.getZ(i) >= to ? 1 : 0;
+  for (let i = 0; i < pos.count; i += 1) above[i] = pos.getZ(i) >= neck.to ? 1 : 0;
   for (let i = 0; i < pos.count; i += 1) {
     const z = pos.getZ(i);
     const x = pos.getX(i);
-    // Neck-width only, so the tops of the shoulders are never pulled up.
-    const w = smoothstep(from, to, z) * (1 - smoothstep(9, 13, Math.abs(x)));
+    // Neck-width only, eased in above the shoulders so they are never pulled.
+    const w = smoothstep(neck.from, neck.from + 4, z) * (1 - smoothstep(9, 13, Math.abs(x)));
     if (w <= 0) continue;
     const y = pos.getY(i);
-    const dx = (x - centre[0]) / radii[0];
-    const dy = (y - centre[1]) / radii[1];
-    const dz = (z - centre[2]) / radii[2];
-    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-    pos.setXYZ(
-      i,
-      x + (centre[0] + (dx / len) * radii[0] - x) * w,
-      y + (centre[1] + (dy / len) * radii[1] - y) * w,
-      z + (centre[2] + (dz / len) * radii[2] - z) * w,
-    );
+    const dy = y - neck.y;
+    const r = Math.hypot(x, dy) || 1;
+    pos.setXYZ(i, x + ((x / r) * neck.radius - x) * w, y + (neck.y + (dy / r) * neck.radius - y) * w, z);
   }
 
   // Keep every triangle that is not wholly inside the head, then append the
@@ -1166,7 +1162,7 @@ function smoothHead(geometry) {
     if (above[a] && above[b] && above[c]) continue;
     kept.push(a, b, c);
   }
-  const head = new THREE.SphereGeometry(1, 40, 28);
+  const head = new THREE.SphereGeometry(1, 48, 32);
   head.scale(radii[0], radii[1], radii[2]);
   head.translate(centre[0], centre[1], centre[2]);
   const headPos = head.attributes.position;
@@ -1189,9 +1185,52 @@ function smoothPerson(geometry) {
   bare.setAttribute("position", geometry.attributes.position);
   if (geometry.index) bare.setIndex(geometry.index);
   const welded = mergeVertices(bare, 0.05);
+  relax(welded, CONFIG.figures.presenter.smoothing);
   welded.computeVertexNormals();
   geometry.dispose();
   return welded;
+}
+
+// Taubin smoothing: alternate a shrinking and an inflating Laplacian step, so
+// the low-poly edges round off without the figure getting thinner.
+function relax(geometry, passes) {
+  const pos = geometry.attributes.position;
+  const index = geometry.index.array;
+  const links = Array.from({ length: pos.count }, () => new Set());
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i];
+    const b = index[i + 1];
+    const c = index[i + 2];
+    links[a].add(b).add(c);
+    links[b].add(a).add(c);
+    links[c].add(a).add(b);
+  }
+  const next = new Float32Array(pos.count * 3);
+  const step = (factor) => {
+    for (let i = 0; i < pos.count; i += 1) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      let sx = 0;
+      let sy = 0;
+      let sz = 0;
+      links[i].forEach((j) => {
+        sx += pos.getX(j);
+        sy += pos.getY(j);
+        sz += pos.getZ(j);
+      });
+      const n = links[i].size || 1;
+      next[i * 3] = x + (sx / n - x) * factor;
+      next[i * 3 + 1] = y + (sy / n - y) * factor;
+      next[i * 3 + 2] = z + (sz / n - z) * factor;
+    }
+    pos.array.set(next);
+  };
+  for (let p = 0; p < passes; p += 1) {
+    step(0.5);
+    step(-0.53);
+  }
+  pos.needsUpdate = true;
 }
 
 // Four soft faces from the lens (apex) to the screen corners.

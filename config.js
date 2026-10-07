@@ -99,6 +99,9 @@ export const CONFIG = {
     rectIntensity: 14,
     exposure: 1.05,
     beamOpacity: 0.075,
+    // Projector height above the screen tops, and where their rods end.
+    projectorRise: 0.42,
+    ceilingRise: 1.41,
     lensBoost: 0.95,
     glowSize: 0.42,
     glowOpacity: 0.6,
@@ -166,7 +169,11 @@ export const CONFIG = {
       arms: { pivotX: 20, pivotZ: 37, dropDeg: 42, blendFrom: 15, blendTo: 26 },
       forearms: { elbowX: 25, elbowY: 17, elbowZ: 8, blend: 9, backDeg: 13, inDeg: 7 },
       shoulders: { squeeze: 0.32, core: 10, armX: 25, rampFrom: 0, rampTo: 28, neckFrom: 47, neckTo: 53 },
-      head: { centre: [0, 12, 63.6], radii: [7.3, 9, 11.8], from: 47, to: 52 },
+      // Rounder head on a real neck (file centimetres): the neck column is
+      // `radius` round, rises from z `from` and ends at `to` inside the head.
+      head: { centre: [0, 12.5, 66], radii: [7.8, 8.9, 10.4], neck: { y: 13, radius: 5.4, from: 46, to: 58 } },
+      // Taubin smoothing passes over the whole body.
+      smoothing: 4,
     },
   },
 
