@@ -294,10 +294,18 @@ async function boot(ui) {
     world.renderer.dispose();
     world.renderer.forceContextLoss();
     world.renderer.domElement.remove();
+    people.remove();
     debug?.remove();
   }
 
   ui.stage.appendChild(world.renderer.domElement);
+  // The audience: a full-frame cut-out drawn over the scene (see CONFIG.figures.audience).
+  const people = document.createElement("img");
+  people.className = "mrc-cine__people";
+  people.alt = "";
+  people.decoding = "async";
+  people.src = new URL(`./${CONFIG.figures.audience.image}`, import.meta.url).href;
+  ui.stage.appendChild(people);
   sync();
 }
 
@@ -554,7 +562,7 @@ function createWorld(stage, coarse) {
     phase: Math.random(),
   }));
 
-  const audience = createAudience(trackG, trackM, trackT);
+  const audience = createAudience(trackG, trackM);
   scene.add(audience.root);
 
   const pulseMat = trackM(new THREE.MeshBasicMaterial({
@@ -684,9 +692,8 @@ function createWorld(stage, coarse) {
     left: screenFit(screens.left),
     centre: screenFit(screens.centre),
     right: screenFit(screens.right),
-    audience: audience.fit.flatMap(boxPoints),
   };
-  fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right, ...fitSets.audience];
+  fitSets.all = [...fitSets.left, ...fitSets.centre, ...fitSets.right];
   fitSets.each = [screens.left, screens.centre, screens.right].map((entry) => boxPoints(entry.mesh));
 
   const clockVectors = {
@@ -922,18 +929,33 @@ function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp, centre) {
 function updateCamera(world, story) {
   const cam = CONFIG.camera;
   const { aspect } = world.view;
-  // A still camera: fixed direction, no sway or push-in. The setup is
-  // symmetric about x = 0 and the view looks straight down -Z, so the tight
-  // fit (rods, projectors, audience and table included) keeps it centred. The
-  // frame is re-fitted every frame, so it follows any change in box size.
+  // A still camera: fixed direction, no sway or push-in. Fit the screens,
+  // projectors and rods tightly, then shift and scale the view (setViewOffset)
+  // so they land exactly on CONFIG.camera.layout. That fixes the room's place
+  // in the box, which the full-frame audience layer is drawn to match.
   const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2]).normalize();
   fitCamera(world.fitSets.all, forward, cam.fov, aspect, cam.margin, world.tmp.camPos, world.tmp);
-  world.camera.position.copy(world.tmp.camPos);
-  world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
-  if (world.camera.fov !== cam.fov) {
-    world.camera.fov = cam.fov;
-    world.camera.updateProjectionMatrix();
-  }
+  const camera = world.camera;
+  camera.position.copy(world.tmp.camPos);
+  camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
+  camera.fov = cam.fov;
+  camera.clearViewOffset();
+  camera.updateMatrixWorld();
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  world.fitSets.all.forEach((p) => {
+    const v = world.tmp.fitB.copy(p).project(camera);
+    x0 = Math.min(x0, v.x);
+    x1 = Math.max(x1, v.x);
+    y1 = Math.max(y1, v.y);
+  });
+  const { cssW: W, cssH: H } = world.view;
+  const { left, right, top } = cam.layout;
+  const scale = ((right - left) * 2) / (x1 - x0);
+  const offX = ((x0 + 1) / 2) * W - (left * W) / scale;
+  const offY = ((1 - y1) / 2) * H - (top * H) / scale;
+  camera.setViewOffset(W, H, offX, offY, W / scale, H / scale);
 }
 
 function renderModel(world) {
@@ -994,40 +1016,11 @@ function fadeMaterial(trackM, { low, high, glow, fade, gradient, roughness = 0.7
 
 // One seated person from behind: a smooth lathed torso (elliptical, wider than
 // deep) with a neck, and a head. Metres, base at y = 0, facing -Z.
-// The audience: five site workers from a photographic cut-out on a flat card
-// that faces the camera (the camera is still, so a card reads as solid), in
-// front of an elliptical table. The card fades in once its image has loaded.
-function createAudience(trackG, trackM, trackT) {
-  const { image, aspect, width, top: cardTop, z, brightness } = CONFIG.figures.audience;
+// The table the audience stands at, in front of the screens. (The people
+// themselves are the image layer drawn over the canvas.)
+function createAudience(trackG, trackM) {
   const table = CONFIG.figures.table;
   const root = new THREE.Group();
-  const fit = [];
-
-  const height = width / aspect;
-  const cardMat = trackM(new THREE.MeshBasicMaterial({
-    color: new THREE.Color(brightness, brightness, brightness),
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    toneMapped: false,
-  }));
-  const texture = trackT(new THREE.TextureLoader().load(new URL(`./${image}`, import.meta.url).href, () => {
-    cardMat.opacity = 1;
-    cardMat.needsUpdate = true;
-  }, undefined, (error) => {
-    console.warn("Mission Room CINE: audience image did not load.", error);
-  }));
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  cardMat.map = texture;
-  const card = new THREE.Mesh(trackG(new THREE.PlaneGeometry(width, height)), cardMat);
-  card.position.set(0, cardTop - height / 2, z);
-  // Face straight back along the camera's view direction.
-  const view = new THREE.Vector3(...CONFIG.camera.direction).normalize();
-  card.lookAt(card.position.clone().sub(view));
-  card.renderOrder = 3;
-  root.add(card);
-  fit.push(card);
 
   // Table: a thin elliptical top with a crisp lighter edge, a satin finish that
   // picks up the screens, and a pedestal that fades out toward the floor.
@@ -1063,8 +1056,7 @@ function createAudience(trackG, trackM, trackT) {
   pedestal.position.set(0, (table.top - table.thickness) / 2, table.z);
   pedestal.renderOrder = 1;
   root.add(top, edge, pedestal);
-  fit.push(top);
-  return { root, fit };
+  return { root };
 }
 
 // Four soft faces from the lens (apex) to the screen corners.

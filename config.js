@@ -5,7 +5,7 @@
 export const CONFIG = {
   brandLabel: "MISSION ROOM / CINE",
   ariaLabel:
-    "Three large projection screens in a shallow curve, with five people seated at a table in front of them. A schedule change on the left screen updates the station model and performance screens across the room.",
+    "Three large projection screens in a shallow curve, with five people standing at a table in front of them, one pointing up at the screens. A schedule change on the left screen updates the station model and performance screens across the room.",
   statusLine: "RESCHEDULED · 3 SUCCESSORS UPDATED · FORECAST REVISED",
   quietLine: "BASELINE HELD · CRITICAL PATH CLEAR",
 
@@ -164,34 +164,30 @@ export const CONFIG = {
     direction: [0, -0.54, -9.27],
     fov: 32,
     margin: { x: 0.012, y: 0.03 },
+    // Where the screens, projectors and rods sit in the box, as fractions of
+    // its width and height (taken from the approved layout mockup, 1862 x 845):
+    // outer screen edges at 85 and 1794 px, rod tops at 35 px. The audience
+    // layer is drawn in the same frame, so the two always line up.
+    layout: { left: 85 / 1862, right: 1794 / 1862, top: 35 / 845 },
   },
 
   figures: {
-    // Five site workers seen from behind, facing the screens: a photographic
-    // cut-out (assets/workers.webp, background removed, fading to transparent
-    // at the bottom and sides) on a flat card that faces the still camera.
-    // Placed on the near side of the table, with the hard-hat tops in the dark
-    // band under the screens (checked not to overlap any screen; see ?debug).
+    // Five people seen from behind, looking up at the screens (one pointing):
+    // a photographic cut-out, background removed and fading out at the bottom,
+    // drawn over the scene at the full size of the box. It was cut from the
+    // approved layout mockup, so its people sit exactly where that mockup
+    // puts them once the camera matches CONFIG.camera.layout.
     audience: {
-      image: "assets/workers.webp",
-      // Width : height of the image, so the card is sized before it loads.
-      aspect: 1774 / 571,
-      // Card width in metres, height of its top edge (hat tops) and its
-      // distance in front of the centre screen.
-      width: 3.6,
-      top: 1.07,
-      z: 4.72,
-      // A touch under full brightness so the photo sits in the dim room.
-      brightness: 0.88,
+      image: "assets/people.webp",
     },
     table: {
-      z: 3.9,
-      radiusX: 1.85,
-      radiusZ: 0.52,
-      top: 0.68,
+      z: 4.2,
+      radiusX: 1.55,
+      radiusZ: 0.36,
+      top: 0.8,
       thickness: 0.04,
       // The pedestal fades out toward the floor.
-      fade: { from: 0.2, to: 0.66 },
+      fade: { from: 0.25, to: 0.78 },
     },
   },
 
