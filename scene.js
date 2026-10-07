@@ -5,6 +5,7 @@ import { RenderPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/R
 import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
+import { MarchingCubes } from "https://esm.sh/three@0.186.1/addons/objects/MarchingCubes.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
@@ -95,6 +96,9 @@ async function boot(ui) {
   let raf = 0;
   let last = performance.now();
   let paintAcc = 1;
+  let velocity = 0;
+  let primed = false;
+  const pinBox = { top: 0, height: window.innerHeight };
   let paintKeys = surfaceKeys(story);
   let lightAcc = 0;
   let destroyed = false;
@@ -144,9 +148,12 @@ async function boot(ui) {
     world.camera.aspect = aspect;
     world.view = { cssW, cssH, aspect, portrait: cssW < 768 || cssH > cssW };
     world.camera.updateProjectionMatrix();
+    pinBox.top = parseFloat(getComputedStyle(ui.pin).top) || 0;
+    pinBox.height = ui.pin.offsetHeight || window.innerHeight;
   };
   const ro = new ResizeObserver(resize);
   ro.observe(ui.stage);
+  window.addEventListener("resize", resize);
   resize();
 
   const onLost = (event) => {
@@ -183,14 +190,41 @@ async function boot(ui) {
     raf = requestAnimationFrame(loop);
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
+    world.time += dt;
     if (!POSTER_MODE) {
+      // Progress runs while the stage is pinned: from the track's top reaching
+      // the pin's sticky offset until the track's bottom releases the pin. On
+      // desktop that is top 0 and a full-height pin; on portrait the pin sits
+      // mid-viewport, and measuring from the viewport top left dead zones.
       const rect = ui.el.getBoundingClientRect();
-      const travel = Math.max(1, ui.el.offsetHeight - window.innerHeight);
-      const scrolled = Math.min(travel, Math.max(0, -rect.top));
+      const travel = Math.max(1, ui.el.offsetHeight - pinBox.height);
+      const scrolled = Math.min(travel, Math.max(0, pinBox.top - rect.top));
       const target = scrolled / travel;
-      const blend = reduce ? 1 : 1 - Math.exp(-dt * CONFIG.scrollResponse);
-      smooth += (target - smooth) * blend;
-      if (Math.abs(target - smooth) < 0.0004) smooth = target;
+      // Start where the reader already is, so a reload mid-page does not replay
+      // the whole story through the spring.
+      if (!primed) {
+        smooth = target;
+        primed = true;
+      }
+      if (reduce) {
+        smooth = target;
+        velocity = 0;
+      } else {
+        // Critically damped spring: a little carry after a flick, a soft
+        // landing, no overshoot. Substepped so a slow frame stays stable.
+        const k = CONFIG.scroll.stiffness;
+        const c = 2 * Math.sqrt(k) * CONFIG.scroll.damping;
+        const h = dt / 4;
+        for (let i = 0; i < 4; i += 1) {
+          velocity += (k * (target - smooth) - c * velocity) * h;
+          smooth += velocity * h;
+        }
+        smooth = Math.min(1, Math.max(0, smooth));
+        if (Math.abs(target - smooth) < 0.0002 && Math.abs(velocity) < 0.002) {
+          smooth = target;
+          velocity = 0;
+        }
+      }
     }
     t = smooth * CONFIG.storyEnd;
     sampleStory(t, t, story);
@@ -211,8 +245,10 @@ async function boot(ui) {
       lightAcc = 0;
       world.sampleLights(story);
     }
-    world.lights.forEach((light) => {
+    const lightBlend = 1 - Math.exp(-dt * 5);
+    world.lights.forEach((light, index) => {
       light.intensity = CONFIG.room.rectIntensity * story.bg * Math.max(story.power, story.bg);
+      light.color.lerp(world.lightTargets[index], lightBlend);
     });
     world.screenMats.forEach((mat) => {
       mat.emissiveIntensity = 1.15 * story.bg;
@@ -281,6 +317,7 @@ async function boot(ui) {
     ui.destroyed = true;
     cancelAnimationFrame(raf);
     ro.disconnect();
+    window.removeEventListener("resize", resize);
     ui.io.disconnect();
     document.removeEventListener("visibilitychange", onVis);
     world.renderer.domElement.removeEventListener("webglcontextlost", onLost);
@@ -564,14 +601,7 @@ function createWorld(stage, coarse) {
     roughness: 0.78,
     metalness: 0,
   }));
-  const skinMat = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite500,
-    emissive: CONFIG.color.graphite800,
-    emissiveIntensity: 0.35,
-    roughness: 0.6,
-    metalness: 0,
-  }));
-  const presenter = buildPerson(CONFIG.figures.presenter.height, clothMat, skinMat, trackG);
+  const presenter = buildPerson(CONFIG.figures.presenter.height, clothMat, trackG);
   scene.add(presenter.root);
   const shadow = new THREE.Mesh(trackG(new THREE.CircleGeometry(0.28, 16)), shadowMat);
   shadow.rotation.x = -Math.PI / 2;
@@ -660,11 +690,13 @@ function createWorld(stage, coarse) {
     scene.updateMatrixWorld(true);
   }
 
+  // Sampled a few times a second into targets; the loop eases each light's
+  // colour toward its target so the spill never snaps.
+  const lightTargets = [new THREE.Color(CONFIG.color.ivory), new THREE.Color(CONFIG.color.ivory), new THREE.Color(CONFIG.color.ivory)];
   function sampleLights(story) {
-    averageInto(surfaces.left.canvas, screens.left.light.color);
-    averageInto(surfaces.right.canvas, screens.right.light.color);
-    scratch.set(CONFIG.color.ivory).lerp(screens.centre.light.color.set(CONFIG.color.accent), story.resequence * 0.55);
-    screens.centre.light.color.copy(scratch);
+    averageInto(surfaces.left.canvas, lightTargets[0]);
+    lightTargets[1].set(CONFIG.color.ivory).lerp(scratch.set(CONFIG.color.accent), story.resequence * 0.55);
+    averageInto(surfaces.right.canvas, lightTargets[2]);
   }
 
   function averageInto(canvas, color) {
@@ -777,6 +809,8 @@ function createWorld(stage, coarse) {
     tmp: clockVectors,
     updateMatrices,
     sampleLights,
+    lightTargets,
+    time: 0,
     markTextures(only) {
       const textures = { left: leftTex, right: rightTex, overlay: overlayTex };
       Object.keys(textures).forEach((name) => {
@@ -792,17 +826,17 @@ function screenPoint(mesh, u, v, z, out) {
   return out;
 }
 
-// The person is there for scale only: just outside the left wing's outer edge,
-// clear of the screens from the camera's side, facing the camera.
+// The person is there for scale only. They stand right beside the left screen's
+// outer edge, in line with it, and face the way that screen faces, so their
+// shoulders run parallel to it.
 function placePerson(figure, mesh) {
   const edge = screenPoint(mesh, 0, 0, 0, new THREE.Vector3());
-  const along = screenPoint(mesh, 1, 0, 0, new THREE.Vector3()).sub(edge).normalize();
-  const normal = new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld);
+  const along = screenPoint(mesh, 1, 0, 0, new THREE.Vector3()).sub(edge).setY(0).normalize();
+  const normal = new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld).setY(0).normalize();
   const { outset, forward } = CONFIG.figures.presenter;
   figure.root.position.copy(edge).addScaledVector(along, -outset).addScaledVector(normal, forward);
   figure.root.position.y = 0;
-  const [dx, , dz] = CONFIG.camera.direction;
-  figure.root.lookAt(figure.root.position.x - dx, 0, figure.root.position.z - dz);
+  figure.root.lookAt(figure.root.position.clone().add(normal));
 }
 
 function updateFrames(world, story) {
@@ -846,7 +880,7 @@ function updateBeams(world, story) {
     const beam = world.beams[seed.beam];
     const data = beam.userData;
     if (!data?.dir) return;
-    const along = (seed.phase + story.t * 0.04) % 1;
+    const along = (seed.phase + world.time * CONFIG.room.moteSpeed + story.t * 0.02) % 1;
     world.tmp.mote.copy(data.start).addScaledVector(data.dir, along * data.len);
     world.tmp.tangent.crossVectors(Math.abs(data.dir.y) > 0.85 ? AXIS_X : UP, data.dir).normalize();
     world.tmp.bitangent.crossVectors(data.dir, world.tmp.tangent);
@@ -859,7 +893,7 @@ function updateBeams(world, story) {
 }
 
 function updateModel(world, story) {
-  world.model.root.rotation.y = (story.t / CONFIG.storyEnd) * 0.42;
+  world.model.root.rotation.y = (story.t / CONFIG.storyEnd) * 0.42 + world.time * CONFIG.model.yawRate;
   world.model.levels.forEach((level, index) => {
     const shown = story.modelLevel[index];
     const active = index === CONFIG.model.activeLevel;
@@ -959,9 +993,12 @@ function updateCamera(world, story) {
     .applyAxisAngle(UP, yaw);
   // Hold the frame on the middle of the three screens, then back off until the
   // whole setup (person and projectors included) fits around it.
-  fitCamera(world.fitSets.screens, forward, cam.fov, aspect, cam.margin, world.tmp.fitA, world.tmp);
+  // A slow push-in: a little extra margin at the start that settles out by the end.
+  const push = cam.pushIn * (1 - ease.sine(u));
+  const margin = { x: cam.margin.x + push, y: cam.margin.y + push };
+  fitCamera(world.fitSets.screens, forward, cam.fov, aspect, margin, world.tmp.fitA, world.tmp);
   const centre = { x: world.tmp.fitA.dot(world.tmp.right), y: world.tmp.fitA.dot(world.tmp.up) };
-  fitCamera(world.fitSets.all, forward, cam.fov, aspect, cam.margin, world.tmp.camPos, world.tmp, centre);
+  fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp, centre);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -992,43 +1029,94 @@ function applyTier(world, index, coarse) {
 }
 
 // A standing adult, proportioned for a 1.78 m figure and scaled to `height`.
-// Torso, limbs and neck are lathed from smooth spline profiles, so each is one
-// continuous tapered surface rather than a stack of joints. Faces +Z, feet on y = 0.
-function buildPerson(height, cloth, skin, trackG) {
-  const s = height / 1.78;
+// The body is one surface: a signed-distance field of tapered limbs and
+// ellipsoids joined with a smooth minimum, so shoulders, hands and feet blend
+// into the body instead of meeting it at a seam. Polygonised once at boot with
+// MarchingCubes, then kept as a plain static geometry. Faces +Z, feet on y = 0.
+function buildPerson(height, material, trackG) {
+  const res = CONFIG.figures.presenter.resolution;
+  const half = 0.94;
+  const centre = [0, 0.92, 0.02];
+  const sdf = personField();
+  const mc = new MarchingCubes(res, material, false, false, 60000);
+  mc.isolation = 0;
+  mc.field.fill(-1);
+  for (let z = 0; z < res; z += 1) {
+    const pz = ((z - res / 2) / (res / 2)) * half + centre[2];
+    if (pz < -0.2 || pz > 0.26) continue;
+    for (let y = 0; y < res; y += 1) {
+      const py = ((y - res / 2) / (res / 2)) * half + centre[1];
+      for (let x = 0; x < res; x += 1) {
+        const px = ((x - res / 2) / (res / 2)) * half + centre[0];
+        if (px < -0.36 || px > 0.36) continue;
+        mc.field[x + y * res + z * res * res] = -sdf(px, py, pz) * 40;
+      }
+    }
+  }
+  mc.update();
+  const count = mc.count;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(mc.geometry.attributes.position.array.slice(0, count * 3), 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(mc.geometry.attributes.normal.array.slice(0, count * 3), 3));
+  geo.scale(half, half, half);
+  geo.translate(centre[0], centre[1], centre[2]);
+  mc.geometry.dispose();
+
   const root = new THREE.Group();
-  const body = new THREE.Group();
-  body.scale.setScalar(s);
-  root.add(body);
-  const add = (geo, material, [x, y, z], { rx = 0, scale } = {}) => {
-    const mesh = new THREE.Mesh(trackG(geo), material);
-    mesh.position.set(x, y, z);
-    mesh.rotation.x = rx;
-    if (scale) mesh.scale.set(scale[0], scale[1], scale[2]);
-    body.add(mesh);
-    return mesh;
-  };
-  // Profile is [radius, y] pairs from bottom to top.
-  const lathe = (profile) => {
-    const curve = new THREE.SplineCurve(profile.map(([r, y]) => new THREE.Vector2(r, y)));
-    return new THREE.LatheGeometry(curve.getPoints(64), 40);
-  };
-
-  const leg = [[0, 0.07], [0.038, 0.075], [0.042, 0.11], [0.05, 0.2], [0.058, 0.32], [0.05, 0.48], [0.058, 0.56], [0.075, 0.72], [0.085, 0.86], [0.08, 0.93], [0, 0.95]];
-  const arm = [[0, 0.86], [0.03, 0.87], [0.034, 0.9], [0.04, 1.0], [0.037, 1.1], [0.042, 1.16], [0.05, 1.28], [0.054, 1.38], [0.048, 1.44], [0, 1.47]];
-  const torso = [[0, 0.84], [0.13, 0.86], [0.165, 0.92], [0.17, 0.98], [0.15, 1.08], [0.14, 1.14], [0.155, 1.26], [0.18, 1.38], [0.185, 1.43], [0.15, 1.49], [0.07, 1.52], [0, 1.53]];
-  const neck = [[0, 1.48], [0.05, 1.5], [0.046, 1.56], [0.05, 1.6], [0, 1.62]];
-
-  [-1, 1].forEach((side) => {
-    add(new THREE.CapsuleGeometry(0.045, 0.17, 10, 24), cloth, [side * 0.095, 0.045, 0.05], { rx: Math.PI / 2, scale: [1.05, 1, 0.75] });
-    add(lathe(leg), cloth, [side * 0.095, 0, 0]);
-    add(lathe(arm), cloth, [side * 0.225, 0, 0]);
-    add(new THREE.SphereGeometry(0.045, 32, 24), skin, [side * 0.228, 0.82, 0], { scale: [0.75, 1.3, 0.95] });
-  });
-  add(lathe(torso), cloth, [0, 0, 0], { scale: [1.08, 1, 0.62] });
-  add(lathe(neck), skin, [0, 0, 0]);
-  add(new THREE.SphereGeometry(0.1, 48, 32), skin, [0, 1.67, 0], { scale: [0.86, 1.12, 0.98] });
+  const mesh = new THREE.Mesh(trackG(geo), material);
+  mesh.scale.setScalar(height / 1.78);
+  root.add(mesh);
   return { root, height };
+}
+
+function personField() {
+  const smin = (a, b, k) => {
+    const h = Math.max(k - Math.abs(a - b), 0) / k;
+    return Math.min(a, b) - h * h * k * 0.25;
+  };
+  // Capsule whose radius tapers from ra at a to rb at b.
+  const limb = (px, py, pz, a, b, ra, rb) => {
+    const bx = b[0] - a[0];
+    const by = b[1] - a[1];
+    const bz = b[2] - a[2];
+    const qx = px - a[0];
+    const qy = py - a[1];
+    const qz = pz - a[2];
+    const t = Math.min(1, Math.max(0, (qx * bx + qy * by + qz * bz) / (bx * bx + by * by + bz * bz)));
+    const dx = qx - bx * t;
+    const dy = qy - by * t;
+    const dz = qz - bz * t;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz) - (ra + (rb - ra) * t);
+  };
+  const blob = (px, py, pz, c, r) => {
+    const x = (px - c[0]) / r[0];
+    const y = (py - c[1]) / r[1];
+    const z = (pz - c[2]) / r[2];
+    const k0 = Math.sqrt(x * x + y * y + z * z);
+    const k1 = Math.sqrt((x * x) / (r[0] * r[0]) + (y * y) / (r[1] * r[1]) + (z * z) / (r[2] * r[2]));
+    return k1 > 0 ? (k0 * (k0 - 1)) / k1 : -Math.min(r[0], r[1], r[2]);
+  };
+  return (px, py, pz) => {
+    // Trunk: pelvis, abdomen, chest, shoulder line, neck, head.
+    let d = blob(px, py, pz, [0, 0.95, 0], [0.165, 0.12, 0.105]);
+    d = smin(d, blob(px, py, pz, [0, 1.12, 0], [0.148, 0.16, 0.098]), 0.07);
+    d = smin(d, blob(px, py, pz, [0, 1.3, 0.004], [0.172, 0.17, 0.112]), 0.07);
+    d = smin(d, limb(px, py, pz, [-0.18, 1.4, 0], [0.18, 1.4, 0], 0.06, 0.06), 0.06);
+    d = smin(d, limb(px, py, pz, [0, 1.44, 0], [0, 1.6, 0.008], 0.054, 0.046), 0.05);
+    d = smin(d, blob(px, py, pz, [0, 1.68, 0.014], [0.082, 0.106, 0.096]), 0.035);
+    // Mirror the limbs: x becomes the distance from the centre line.
+    const ax = Math.abs(px);
+    // Arm: shoulder, elbow, wrist, then a mitten hand that blends at the wrist.
+    let arm = limb(ax, py, pz, [0.2, 1.41, 0], [0.252, 1.11, -0.012], 0.054, 0.041);
+    arm = smin(arm, limb(ax, py, pz, [0.252, 1.11, -0.012], [0.262, 0.87, 0.02], 0.041, 0.031), 0.025);
+    arm = smin(arm, limb(ax, py, pz, [0.262, 0.86, 0.022], [0.262, 0.77, 0.032], 0.032, 0.03), 0.035);
+    d = smin(d, arm, 0.045);
+    // Leg: hip, knee, ankle, then the foot forward from the heel.
+    let leg = limb(ax, py, pz, [0.094, 0.94, 0], [0.098, 0.5, 0.012], 0.082, 0.052);
+    leg = smin(leg, limb(ax, py, pz, [0.098, 0.5, 0.012], [0.1, 0.09, -0.004], 0.052, 0.036), 0.03);
+    leg = smin(leg, limb(ax, py, pz, [0.1, 0.045, -0.03], [0.104, 0.034, 0.13], 0.04, 0.033), 0.05);
+    return smin(d, leg, 0.05);
+  };
 }
 
 // Four soft faces from the lens (apex) to the screen corners.

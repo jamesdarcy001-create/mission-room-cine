@@ -74,7 +74,9 @@ export const CONFIG = {
   ],
   storyEnd: 12,
   scrollTrackVh: 320,
-  scrollResponse: 7,
+  // Scroll-to-story spring. Higher stiffness follows the scrollbar more tightly;
+  // damping 1 is critical (no overshoot).
+  scroll: { stiffness: 38, damping: 1 },
   posterTime: 6.4,
 
   room: {
@@ -98,6 +100,7 @@ export const CONFIG = {
     lensBoost: 0.95,
     glowSize: 0.42,
     glowOpacity: 0.6,
+    moteSpeed: 0.035,
   },
 
   screen: {
@@ -133,7 +136,7 @@ export const CONFIG = {
   },
 
   model: {
-    yawRate: 0.012,
+    yawRate: 0.06,
     levels: 4,
     activeLevel: 3,
   },
@@ -145,10 +148,13 @@ export const CONFIG = {
     fov: 32,
     yawDeg: 4,
     margin: { x: 0.035, y: 0.07 },
+    pushIn: 0.05,
   },
 
   figures: {
-    presenter: { height: 1.78, outset: 0.55, forward: 0.9 },
+    // outset: metres beyond the left screen's outer edge; forward: metres in front of its face.
+    // resolution: marching-cubes grid for the body surface (one-off cost at boot).
+    presenter: { height: 1.78, outset: 0.42, forward: 0.22, resolution: 112 },
   },
 
   quality: {
