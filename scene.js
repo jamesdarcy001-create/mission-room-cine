@@ -1,13 +1,11 @@
 import * as THREE from "https://esm.sh/three@0.186.1";
 import { RectAreaLightUniformsLib } from "https://esm.sh/three@0.186.1/addons/lights/RectAreaLightUniformsLib.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
-import { TDSLoader } from "https://esm.sh/three@0.186.1/addons/loaders/TDSLoader.js";
-import { mergeGeometries, mergeVertices } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
+import { mergeGeometries } from "https://esm.sh/three@0.186.1/addons/utils/BufferGeometryUtils.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
 
-const PERSON_URL = new URL("./models/lowpolyman.3ds", import.meta.url).href;
 const params = new URLSearchParams(window.location.search);
 const POSTER_MODE = params.has("poster");
 const DEBUG_MODE = params.has("debug");
@@ -289,7 +287,6 @@ async function boot(ui) {
     document.removeEventListener("visibilitychange", onVis);
     world.renderer.domElement.removeEventListener("webglcontextlost", onLost);
     world.renderer.domElement.removeEventListener("webglcontextrestored", onRestored);
-    world.presenter.dispose();
     disposables.geo.forEach((geo) => geo.dispose());
     disposables.mat.forEach((mat) => mat.dispose());
     disposables.tex.forEach((tex) => tex.dispose());
@@ -554,21 +551,6 @@ function createWorld(stage, coarse) {
     phase: Math.random(),
   }));
 
-  const shadowTex = trackT(new THREE.CanvasTexture(shadowCanvas()));
-  shadowTex.colorSpace = THREE.SRGBColorSpace;
-  const shadowMat = trackM(new THREE.MeshBasicMaterial({
-    map: shadowTex,
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-  }));
-  const presenter = createPerson(CONFIG.figures.presenter.height, trackG, trackM);
-  scene.add(presenter.root);
-  const shadow = new THREE.Mesh(trackG(new THREE.CircleGeometry(0.28, 16)), shadowMat);
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.015;
-  presenter.root.add(shadow);
-
   const audience = createAudience(trackG, trackM);
   scene.add(audience.root);
 
@@ -680,7 +662,6 @@ function createWorld(stage, coarse) {
   }
 
   placeArchitecture();
-  placePerson(presenter, screens.left.mesh);
   updateMatrices();
 
   // World-space points the camera must keep in frame, rods included.
@@ -697,9 +678,8 @@ function createWorld(stage, coarse) {
     const arch = entry.group.userData.arch;
     return [entry.mesh, arch.plinth, arch.fascia, arch.mount, arch.stem].flatMap(boxPoints);
   };
-  const personFit = boxPoints(presenter.root);
   const fitSets = {
-    left: [...screenFit(screens.left), ...personFit],
+    left: screenFit(screens.left),
     centre: screenFit(screens.centre),
     right: screenFit(screens.right),
     audience: audience.fit.flatMap(boxPoints),
@@ -742,7 +722,6 @@ function createWorld(stage, coarse) {
     renderer,
     scene,
     camera,
-    presenter,
     audience,
     screens,
     lights,
@@ -785,19 +764,6 @@ function screenPoint(mesh, u, v, z, out) {
   out.set((u - 0.5) * CONFIG.room.panelWidth, (v - 0.5) * CONFIG.room.panelHeight, z);
   mesh.localToWorld(out);
   return out;
-}
-
-// The person is there for scale only. They stand right beside the left screen's
-// outer edge, in line with it, and face the way that screen faces, so their
-// shoulders run parallel to it.
-function placePerson(figure, mesh) {
-  const edge = screenPoint(mesh, 0, 0, 0, new THREE.Vector3());
-  const along = screenPoint(mesh, 1, 0, 0, new THREE.Vector3()).sub(edge).setY(0).normalize();
-  const normal = new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld).setY(0).normalize();
-  const { outset, forward } = CONFIG.figures.presenter;
-  figure.root.position.copy(edge).addScaledVector(along, -outset).addScaledVector(normal, forward);
-  figure.root.position.y = 0;
-  figure.root.lookAt(figure.root.position.clone().add(normal));
 }
 
 function updateFrames(world, story) {
@@ -952,19 +918,12 @@ function fitCamera(points, forward, fovDeg, aspect, margin, out, tmp, centre) {
 function updateCamera(world, story) {
   const cam = CONFIG.camera;
   const { aspect } = world.view;
-  // Auto-play: a slow sideways sway on the clock, and a gentle push-in over the
-  // intro that then holds. The frame is re-fitted every frame, so it always fits.
-  const u = Math.min(1, world.time / CONFIG.storyEnd);
-  const yaw = Math.sin((world.time / cam.swayPeriod) * Math.PI * 2) * THREE.MathUtils.degToRad(cam.yawDeg) * 0.5;
-  const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2])
-    .normalize()
-    .applyAxisAngle(UP, yaw);
-  // Fit the whole setup (person, rods and projectors included) tightly to the
-  // box, so it fills the space instead of centring on the middle screen.
-  // A slow push-in: a little extra margin at the start that settles out by the end.
-  const push = cam.pushIn * (1 - ease.sine(u));
-  const margin = { x: cam.margin.x + push, y: cam.margin.y + push };
-  fitCamera(world.fitSets.all, forward, cam.fov, aspect, margin, world.tmp.camPos, world.tmp);
+  // A still camera: fixed direction, no sway or push-in. The setup is
+  // symmetric about x = 0 and the view looks straight down -Z, so the tight
+  // fit (rods, projectors, audience and table included) keeps it centred. The
+  // frame is re-fitted every frame, so it follows any change in box size.
+  const forward = world.tmp.forward.set(cam.direction[0], cam.direction[1], cam.direction[2]).normalize();
+  fitCamera(world.fitSets.all, forward, cam.fov, aspect, cam.margin, world.tmp.camPos, world.tmp);
   world.camera.position.copy(world.tmp.camPos);
   world.camera.lookAt(world.tmp.look.copy(world.tmp.camPos).add(forward));
   if (world.camera.fov !== cam.fov) {
@@ -990,227 +949,6 @@ function applyTier(world, index, coarse) {
   world.tier = tier;
   world.motes.visible = tier.motes;
   void coarse;
-}
-
-// The scale figure: a low-poly man (models/lowpolyman.3ds). The file is
-// Z-up in centimetres, so it is stood upright, its feet put on the floor and
-// it is scaled to `height`, arms lowered and shaded with a light gradient. It loads
-// after the scene is up; until then an invisible proxy of the same size keeps
-// the camera fit stable, so the frame does not jump when it arrives.
-// Faces +Z, feet on y = 0.
-function createPerson(height, trackG, trackM) {
-  const root = new THREE.Group();
-  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.6, height, 0.36)), trackM(new THREE.MeshBasicMaterial()));
-  proxy.position.y = height / 2;
-  proxy.visible = false;
-  root.add(proxy);
-  // A light vertical gradient (vertex colours), part lit and part glow, so the
-  // figure reads against the dark room without competing with the screens.
-  const { glow } = CONFIG.figures.presenter.shade;
-  const body = trackM(new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    emissive: 0xffffff,
-    emissiveIntensity: glow,
-    roughness: 0.7,
-    metalness: 0.05,
-  }));
-  body.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <emissivemap_fragment>",
-      "#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vColor.rgb;",
-    );
-  };
-  const person = { root, height, loaded: [] };
-  person.dispose = () => {
-    person.loaded.forEach((geo) => geo.dispose());
-  };
-  new TDSLoader().load(PERSON_URL, (model) => {
-    model.traverse((node) => {
-      if (!node.isMesh) return;
-      node.material.dispose?.();
-      node.material = body;
-      node.geometry = shadePerson(smoothPerson(smoothHead(narrowShoulders(straightenForearms(lowerArms(node.geometry))))));
-      person.loaded.push(node.geometry);
-    });
-    const upright = new THREE.Group();
-    model.rotation.x = -Math.PI / 2;
-    upright.add(model);
-    const box = new THREE.Box3().setFromObject(upright);
-    const scale = height / Math.max(0.01, box.max.y - box.min.y);
-    upright.scale.setScalar(scale);
-    upright.position.set(
-      -((box.min.x + box.max.x) / 2) * scale,
-      -box.min.y * scale,
-      -((box.min.z + box.max.z) / 2) * scale,
-    );
-    root.add(upright);
-  }, undefined, (error) => {
-    console.warn("Mission Room CINE: person model did not load.", error);
-  });
-  return person;
-}
-
-// The supplied man is a single unrigged mesh in an A-pose. Bring the arms down
-// to his sides by rotating arm vertices about each shoulder in the frontal
-// plane. The rotation fades in across the shoulder (and is held off the legs)
-// so the mesh bends there instead of tearing. File units: centimetres, Z-up,
-// x across the body, feet near z = -103, head top near z = 78.
-function lowerArms(geometry) {
-  const { pivotX, pivotZ, dropDeg, blendFrom, blendTo } = CONFIG.figures.presenter.arms;
-  const pos = geometry.attributes.position;
-  // How much each vertex belongs to an arm (0 body, 1 arm). Later steps reuse it.
-  const arm = new Float32Array(pos.count);
-  for (let i = 0; i < pos.count; i += 1) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const side = Math.sign(x);
-    const w = smoothstep(blendFrom, blendTo, Math.abs(x)) * smoothstep(-26, -20, z);
-    arm[i] = w;
-    if (w <= 0) continue;
-    const angle = -side * THREE.MathUtils.degToRad(dropDeg) * w;
-    const dx = x - side * pivotX;
-    const dz = z - pivotZ;
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    pos.setXYZ(i, side * pivotX + dx * c - dz * s, pos.getY(i), pivotZ + dx * s + dz * c);
-  }
-  geometry.userData.arm = arm;
-  pos.needsUpdate = true;
-  return geometry;
-}
-
-function smoothstep(a, b, v) {
-  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
-// Straight forearms. The model's elbows are bent: the forearm swings forward
-// and the hand flares out. Rotate everything below the elbow back into line
-// with the upper arm, about the elbow, easing in over `blend` cm so the elbow
-// bends smoothly rather than creasing.
-function straightenForearms(geometry) {
-  const { elbowX, elbowY, elbowZ, blend, backDeg, inDeg } = CONFIG.figures.presenter.forearms;
-  const pos = geometry.attributes.position;
-  const arm = geometry.userData.arm;
-  for (let i = 0; i < pos.count; i += 1) {
-    const t = arm[i] * smoothstep(elbowZ, elbowZ - blend, pos.getZ(i));
-    if (t <= 0) continue;
-    let x = pos.getX(i);
-    let y = pos.getY(i);
-    let z = pos.getZ(i);
-    const side = Math.sign(x);
-    const ex = side * elbowX;
-    // Inward, in the frontal plane.
-    const a1 = -side * THREE.MathUtils.degToRad(inDeg) * t;
-    let dx = x - ex;
-    let dz = z - elbowZ;
-    x = ex + dx * Math.cos(a1) - dz * Math.sin(a1);
-    z = elbowZ + dx * Math.sin(a1) + dz * Math.cos(a1);
-    // Back, in the side plane (front of the body is low y in this file).
-    const a2 = THREE.MathUtils.degToRad(backDeg) * t;
-    const dy = y - elbowY;
-    dz = z - elbowZ;
-    y = elbowY + dy * Math.cos(a2) - dz * Math.sin(a2);
-    z = elbowZ + dy * Math.sin(a2) + dz * Math.cos(a2);
-    pos.setXYZ(i, x, y, z);
-  }
-  pos.needsUpdate = true;
-  return geometry;
-}
-
-// Narrower shoulders: pull everything more than `core` cm from the centre line
-// inward by `squeeze`, across the shoulder band only, so the torso core and
-// neck keep their shape and the band fades out with no kink. Arms move in as a
-// whole by the same amount the shoulder does, so they stay straight.
-function narrowShoulders(geometry) {
-  const { squeeze, core, armX, rampFrom, rampTo, neckFrom, neckTo } = CONFIG.figures.presenter.shoulders;
-  const pos = geometry.attributes.position;
-  const arm = geometry.userData.arm;
-  const armShift = (armX - core) * squeeze;
-  for (let i = 0; i < pos.count; i += 1) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const w = smoothstep(rampFrom, rampTo, z) * (1 - smoothstep(neckFrom, neckTo, z));
-    const band = Math.max(0, Math.abs(x) - core) * squeeze * w;
-    const shift = arm[i] * armShift + (1 - arm[i]) * band;
-    if (shift <= 0) continue;
-    pos.setX(i, x - Math.sign(x) * shift);
-  }
-  pos.needsUpdate = true;
-  return geometry;
-}
-// A smooth, featureless head on a real neck. The model's own head has eye
-// sockets and a mouth cavity; pressing those onto a surface leaves folded
-// triangles. So everything above the neck top is dropped and a clean, rounded
-// head takes its place. The neck band (jaw and throat in the original) is
-// shaped into a round column that rises out of the shoulders and ends inside
-// the head, so the two join without a seam.
-function smoothHead(geometry) {
-  const { centre, radii, neck } = CONFIG.figures.presenter.head;
-  const pos = geometry.attributes.position;
-  const above = new Uint8Array(pos.count);
-  for (let i = 0; i < pos.count; i += 1) above[i] = pos.getZ(i) >= neck.to ? 1 : 0;
-  for (let i = 0; i < pos.count; i += 1) {
-    const z = pos.getZ(i);
-    const x = pos.getX(i);
-    // Neck-width only, eased in above the shoulders so they are never pulled.
-    const w = smoothstep(neck.from, neck.from + 4, z) * (1 - smoothstep(9, 13, Math.abs(x)));
-    if (w <= 0) continue;
-    const y = pos.getY(i);
-    const dy = y - neck.y;
-    const r = Math.hypot(x, dy) || 1;
-    pos.setXYZ(i, x + ((x / r) * neck.radius - x) * w, y + (neck.y + (dy / r) * neck.radius - y) * w, z);
-  }
-
-  // Keep every triangle that is not wholly inside the head, then append the
-  // ellipsoid. Positions and index only: normals are rebuilt after welding.
-  const source = geometry.index ? geometry.index.array : Array.from({ length: pos.count }, (_, i) => i);
-  const kept = [];
-  for (let i = 0; i < source.length; i += 3) {
-    const a = source[i];
-    const b = source[i + 1];
-    const c = source[i + 2];
-    if (above[a] && above[b] && above[c]) continue;
-    kept.push(a, b, c);
-  }
-  const head = new THREE.SphereGeometry(1, 48, 32);
-  head.scale(radii[0], radii[1], radii[2]);
-  head.translate(centre[0], centre[1], centre[2]);
-  const headPos = head.attributes.position;
-  const positions = new Float32Array((pos.count + headPos.count) * 3);
-  positions.set(pos.array.subarray(0, pos.count * 3), 0);
-  positions.set(headPos.array, pos.count * 3);
-  head.index.array.forEach((v) => kept.push(v + pos.count));
-  head.dispose();
-  const out = new THREE.BufferGeometry();
-  out.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  out.setIndex(kept);
-  geometry.dispose();
-  return out;
-}
-
-// Weld duplicate vertices so normals average across faces: smooth shading
-// instead of visible facets.
-// Feet-to-head colour gradient along the file's Z (up) axis.
-function shadePerson(geometry) {
-  const { feet, head } = CONFIG.figures.presenter.shade;
-  const lo = new THREE.Color(CONFIG.color[feet]);
-  const hi = new THREE.Color(CONFIG.color[head]);
-  const pos = geometry.attributes.position;
-  geometry.computeBoundingBox();
-  const { min, max } = geometry.boundingBox;
-  const span = Math.max(0.001, max.z - min.z);
-  const colors = new Float32Array(pos.count * 3);
-  const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i += 1) {
-    c.copy(lo).lerp(hi, (pos.getZ(i) - min.z) / span);
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-  }
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  return geometry;
 }
 
 // A standard material with a vertical colour gradient and an alpha fade, both
@@ -1337,59 +1075,6 @@ function createAudience(trackG, trackM) {
   return { root, fit };
 }
 
-function smoothPerson(geometry) {
-  const bare = new THREE.BufferGeometry();
-  bare.setAttribute("position", geometry.attributes.position);
-  if (geometry.index) bare.setIndex(geometry.index);
-  const welded = mergeVertices(bare, 0.05);
-  relax(welded, CONFIG.figures.presenter.smoothing);
-  welded.computeVertexNormals();
-  geometry.dispose();
-  return welded;
-}
-
-// Taubin smoothing: alternate a shrinking and an inflating Laplacian step, so
-// the low-poly edges round off without the figure getting thinner.
-function relax(geometry, passes) {
-  const pos = geometry.attributes.position;
-  const index = geometry.index.array;
-  const links = Array.from({ length: pos.count }, () => new Set());
-  for (let i = 0; i < index.length; i += 3) {
-    const a = index[i];
-    const b = index[i + 1];
-    const c = index[i + 2];
-    links[a].add(b).add(c);
-    links[b].add(a).add(c);
-    links[c].add(a).add(b);
-  }
-  const next = new Float32Array(pos.count * 3);
-  const step = (factor) => {
-    for (let i = 0; i < pos.count; i += 1) {
-      const x = pos.getX(i);
-      const y = pos.getY(i);
-      const z = pos.getZ(i);
-      let sx = 0;
-      let sy = 0;
-      let sz = 0;
-      links[i].forEach((j) => {
-        sx += pos.getX(j);
-        sy += pos.getY(j);
-        sz += pos.getZ(j);
-      });
-      const n = links[i].size || 1;
-      next[i * 3] = x + (sx / n - x) * factor;
-      next[i * 3 + 1] = y + (sy / n - y) * factor;
-      next[i * 3 + 2] = z + (sz / n - z) * factor;
-    }
-    pos.array.set(next);
-  };
-  for (let p = 0; p < passes; p += 1) {
-    step(0.5);
-    step(-0.53);
-  }
-  pos.needsUpdate = true;
-}
-
 // Four soft faces from the lens (apex) to the screen corners.
 function beamGeometry(apex, corners) {
   const position = [];
@@ -1491,19 +1176,6 @@ function membersColumns(trackG, material) {
 
 function updateModelOpacity(group, opacity) {
   group.material.opacity = opacity;
-}
-
-function shadowCanvas() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  const gradient = ctx.createRadialGradient(64, 64, 8, 64, 64, 64);
-  gradient.addColorStop(0, "rgba(27,27,27,0.72)");
-  gradient.addColorStop(1, "rgba(27,27,27,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 128, 128);
-  return canvas;
 }
 
 void updateModelOpacity;

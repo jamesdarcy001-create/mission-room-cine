@@ -151,33 +151,13 @@ export const CONFIG = {
   camera: {
     // View direction is fixed; distance and framing are solved every frame so
     // the setup fills whatever box the scene is given (see fitCamera).
-    direction: [-0.1, -1.3, -9.27],
+    // Straight on (x = 0) so the frame is centred; pitched slightly down.
+    direction: [0, -0.54, -9.27],
     fov: 32,
-    yawDeg: 3,
-    swayPeriod: 22,
     margin: { x: 0.012, y: 0.03 },
-    pushIn: 0.03,
   },
 
   figures: {
-    // outset: metres beyond the left screen's outer edge; forward: metres in front of its face.
-    presenter: {
-      height: 1.78,
-      outset: 0.45,
-      forward: 0.22,
-      // Lowering the model's A-pose arms, in the file's centimetres (see lowerArms).
-      arms: { pivotX: 20, pivotZ: 37, dropDeg: 42, blendFrom: 15, blendTo: 26 },
-      forearms: { elbowX: 25, elbowY: 17, elbowZ: 8, blend: 9, backDeg: 13, inDeg: 7 },
-      shoulders: { squeeze: 0.32, core: 10, armX: 25, rampFrom: 0, rampTo: 28, neckFrom: 47, neckTo: 53 },
-      // Rounder head on a real neck (file centimetres): the neck column is
-      // `radius` round, rises from z `from` and ends at `to` inside the head.
-      head: { centre: [0, 12.5, 66], radii: [7.8, 8.9, 10.4], neck: { y: 13, radius: 5.4, from: 46, to: 58 } },
-      // Taubin smoothing passes over the whole body.
-      smoothing: 4,
-      // Vertical gradient, feet to head (CONFIG.color keys), and how much of it
-      // glows so the figure reads light against the dark room.
-      shade: { feet: "graphite600", head: "sand300", glow: 0.18 },
-    },
     // Five seated people seen from behind, on the near side of a table, facing
     // the screens. Busts only: each body fades out below the shoulders.
     // Distances are metres in front of the centre screen (z) and above the
@@ -189,16 +169,16 @@ export const CONFIG = {
       // Gap between the table's near edge and each person's back.
       seatGap: 0.3,
       // Bust base height; the bust is about 0.74 m tall (head top ~ base + 0.74).
-      baseY: 0.56,
+      baseY: 0.42,
       // World heights: fully transparent at `from`, solid at `to`.
-      fade: { from: 0.58, to: 0.86 },
+      fade: { from: 0.44, to: 0.72 },
       shade: { low: "graphite600", high: "sand300", glow: 0.16 },
     },
     table: {
-      z: 3.4,
+      z: 3.9,
       radiusX: 1.85,
       radiusZ: 0.52,
-      top: 0.72,
+      top: 0.68,
       thickness: 0.04,
       // The pedestal fades out toward the floor.
       fade: { from: 0.2, to: 0.66 },
