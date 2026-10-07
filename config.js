@@ -5,7 +5,7 @@
 export const CONFIG = {
   brandLabel: "MISSION ROOM / CINE",
   ariaLabel:
-    "Three large projection screens in a shallow curve, with a person standing beside them for scale. A schedule change on the left screen updates the station model and performance screens across the room.",
+    "Three large projection screens in a shallow curve, with five people seated at a table in front of them. A schedule change on the left screen updates the station model and performance screens across the room.",
   statusLine: "RESCHEDULED · 3 SUCCESSORS UPDATED · FORECAST REVISED",
   quietLine: "BASELINE HELD · CRITICAL PATH CLEAR",
 
