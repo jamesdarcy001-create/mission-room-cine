@@ -153,8 +153,7 @@ export const CONFIG = {
 
   figures: {
     // outset: metres beyond the left screen's outer edge; forward: metres in front of its face.
-    // resolution: marching-cubes grid for the body surface (one-off cost at boot).
-    presenter: { height: 1.78, outset: 0.42, forward: 0.22, resolution: 112 },
+    presenter: { height: 1.78, outset: 0.42, forward: 0.22 },
   },
 
   quality: {

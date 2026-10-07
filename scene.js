@@ -5,12 +5,13 @@ import { RenderPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/R
 import { UnrealBloomPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "https://esm.sh/three@0.186.1/addons/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "https://esm.sh/three@0.186.1/addons/geometries/RoundedBoxGeometry.js";
-import { MarchingCubes } from "https://esm.sh/three@0.186.1/addons/objects/MarchingCubes.js";
+import { GLTFLoader } from "https://esm.sh/three@0.186.1/addons/loaders/GLTFLoader.js";
 import { CONFIG } from "./config.js";
 import { createStoryState, ease, sampleStory } from "./story.js";
 import { createSurfaces, editCanvasPoint, paintSurfaces, surfaceKeys } from "./screens.js";
 
 const POSTER_URL = new URL("./poster.webp", import.meta.url).href;
+const PERSON_URL = new URL("./models/xbot.glb", import.meta.url).href;
 const params = new URLSearchParams(window.location.search);
 const POSTER_MODE = params.has("poster");
 const DEBUG_MODE = params.has("debug");
@@ -191,6 +192,7 @@ async function boot(ui) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     world.time += dt;
+    if (world.presenter.mixer && !reduce) world.presenter.mixer.update(dt);
     if (!POSTER_MODE) {
       // Progress runs while the stage is pinned: from the track's top reaching
       // the pin's sticky offset until the track's bottom releases the pin. On
@@ -322,6 +324,7 @@ async function boot(ui) {
     document.removeEventListener("visibilitychange", onVis);
     world.renderer.domElement.removeEventListener("webglcontextlost", onLost);
     world.renderer.domElement.removeEventListener("webglcontextrestored", onRestored);
+    world.presenter.dispose();
     disposables.geo.forEach((geo) => geo.dispose());
     disposables.mat.forEach((mat) => mat.dispose());
     disposables.tex.forEach((tex) => tex.dispose());
@@ -594,14 +597,7 @@ function createWorld(stage, coarse) {
     depthWrite: false,
     toneMapped: false,
   }));
-  const clothMat = trackM(new THREE.MeshStandardMaterial({
-    color: CONFIG.color.graphite600,
-    emissive: CONFIG.color.graphite800,
-    emissiveIntensity: 0.35,
-    roughness: 0.78,
-    metalness: 0,
-  }));
-  const presenter = buildPerson(CONFIG.figures.presenter.height, clothMat, trackG);
+  const presenter = createPerson(CONFIG.figures.presenter.height, trackG, trackM);
   scene.add(presenter.root);
   const shadow = new THREE.Mesh(trackG(new THREE.CircleGeometry(0.28, 16)), shadowMat);
   shadow.rotation.x = -Math.PI / 2;
@@ -1028,97 +1024,56 @@ function applyTier(world, index, coarse) {
   void coarse;
 }
 
-// A standing adult, proportioned for a 1.78 m figure and scaled to `height`.
-// The body is one surface: a signed-distance field of tapered limbs and
-// ellipsoids joined with a smooth minimum, so shoulders, hands and feet blend
-// into the body instead of meeting it at a seam. Polygonised once at boot with
-// MarchingCubes, then kept as a plain static geometry. Faces +Z, feet on y = 0.
-function buildPerson(height, material, trackG) {
-  const res = CONFIG.figures.presenter.resolution;
-  const half = 0.94;
-  const centre = [0, 0.92, 0.02];
-  const sdf = personField();
-  const mc = new MarchingCubes(res, material, false, false, 60000);
-  mc.isolation = 0;
-  mc.field.fill(-1);
-  for (let z = 0; z < res; z += 1) {
-    const pz = ((z - res / 2) / (res / 2)) * half + centre[2];
-    if (pz < -0.2 || pz > 0.26) continue;
-    for (let y = 0; y < res; y += 1) {
-      const py = ((y - res / 2) / (res / 2)) * half + centre[1];
-      for (let x = 0; x < res; x += 1) {
-        const px = ((x - res / 2) / (res / 2)) * half + centre[0];
-        if (px < -0.36 || px > 0.36) continue;
-        mc.field[x + y * res + z * res * res] = -sdf(px, py, pz) * 40;
-      }
-    }
-  }
-  mc.update();
-  const count = mc.count;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(mc.geometry.attributes.position.array.slice(0, count * 3), 3));
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(mc.geometry.attributes.normal.array.slice(0, count * 3), 3));
-  geo.scale(half, half, half);
-  geo.translate(centre[0], centre[1], centre[2]);
-  mc.geometry.dispose();
-
+// The scale figure: the Xbot mannequin from the three.js examples (Mixamo rig),
+// recoloured to the room's graphite and playing its idle loop. It loads after
+// the scene is up. Until then an invisible proxy of the same size keeps the
+// camera fit stable, so the frame does not jump when the model arrives.
+// Faces +Z, feet on y = 0.
+function createPerson(height, trackG, trackM) {
   const root = new THREE.Group();
-  const mesh = new THREE.Mesh(trackG(geo), material);
-  mesh.scale.setScalar(height / 1.78);
-  root.add(mesh);
-  return { root, height };
+  const proxy = new THREE.Mesh(trackG(new THREE.BoxGeometry(0.62, height, 0.34)), trackM(new THREE.MeshBasicMaterial()));
+  proxy.position.y = height / 2;
+  proxy.visible = false;
+  root.add(proxy);
+  const body = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite500,
+    emissive: CONFIG.color.graphite800,
+    emissiveIntensity: 0.3,
+    roughness: 0.55,
+    metalness: 0.05,
+  }));
+  const joints = trackM(new THREE.MeshStandardMaterial({
+    color: CONFIG.color.graphite750,
+    roughness: 0.45,
+    metalness: 0.2,
+  }));
+  const person = { root, height, mixer: null, loaded: [] };
+  person.dispose = () => {
+    person.loaded.forEach((geo) => geo.dispose());
+    person.mixer?.stopAllAction();
+  };
+  new GLTFLoader().load(PERSON_URL, (gltf) => {
+    const model = gltf.scene;
+    model.traverse((node) => {
+      if (!node.isMesh) return;
+      node.material = node.material.name.includes("Joints") ? joints : body;
+      node.frustumCulled = false;
+      person.loaded.push(node.geometry);
+    });
+    const box = new THREE.Box3().setFromObject(model);
+    model.scale.multiplyScalar(height / Math.max(0.01, box.max.y - box.min.y));
+    root.add(model);
+    const idle = gltf.animations.find((clip) => clip.name === "idle");
+    if (idle) {
+      person.mixer = new THREE.AnimationMixer(model);
+      person.mixer.clipAction(idle).play();
+      person.mixer.update(0);
+    }
+  }, undefined, (error) => {
+    console.warn("Mission Room CINE: person model did not load.", error);
+  });
+  return person;
 }
-
-function personField() {
-  const smin = (a, b, k) => {
-    const h = Math.max(k - Math.abs(a - b), 0) / k;
-    return Math.min(a, b) - h * h * k * 0.25;
-  };
-  // Capsule whose radius tapers from ra at a to rb at b.
-  const limb = (px, py, pz, a, b, ra, rb) => {
-    const bx = b[0] - a[0];
-    const by = b[1] - a[1];
-    const bz = b[2] - a[2];
-    const qx = px - a[0];
-    const qy = py - a[1];
-    const qz = pz - a[2];
-    const t = Math.min(1, Math.max(0, (qx * bx + qy * by + qz * bz) / (bx * bx + by * by + bz * bz)));
-    const dx = qx - bx * t;
-    const dy = qy - by * t;
-    const dz = qz - bz * t;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz) - (ra + (rb - ra) * t);
-  };
-  const blob = (px, py, pz, c, r) => {
-    const x = (px - c[0]) / r[0];
-    const y = (py - c[1]) / r[1];
-    const z = (pz - c[2]) / r[2];
-    const k0 = Math.sqrt(x * x + y * y + z * z);
-    const k1 = Math.sqrt((x * x) / (r[0] * r[0]) + (y * y) / (r[1] * r[1]) + (z * z) / (r[2] * r[2]));
-    return k1 > 0 ? (k0 * (k0 - 1)) / k1 : -Math.min(r[0], r[1], r[2]);
-  };
-  return (px, py, pz) => {
-    // Trunk: pelvis, abdomen, chest, shoulder line, neck, head.
-    let d = blob(px, py, pz, [0, 0.95, 0], [0.165, 0.12, 0.105]);
-    d = smin(d, blob(px, py, pz, [0, 1.12, 0], [0.148, 0.16, 0.098]), 0.07);
-    d = smin(d, blob(px, py, pz, [0, 1.3, 0.004], [0.172, 0.17, 0.112]), 0.07);
-    d = smin(d, limb(px, py, pz, [-0.18, 1.4, 0], [0.18, 1.4, 0], 0.06, 0.06), 0.06);
-    d = smin(d, limb(px, py, pz, [0, 1.44, 0], [0, 1.6, 0.008], 0.054, 0.046), 0.05);
-    d = smin(d, blob(px, py, pz, [0, 1.68, 0.014], [0.082, 0.106, 0.096]), 0.035);
-    // Mirror the limbs: x becomes the distance from the centre line.
-    const ax = Math.abs(px);
-    // Arm: shoulder, elbow, wrist, then a mitten hand that blends at the wrist.
-    let arm = limb(ax, py, pz, [0.2, 1.41, 0], [0.252, 1.11, -0.012], 0.054, 0.041);
-    arm = smin(arm, limb(ax, py, pz, [0.252, 1.11, -0.012], [0.262, 0.87, 0.02], 0.041, 0.031), 0.025);
-    arm = smin(arm, limb(ax, py, pz, [0.262, 0.86, 0.022], [0.262, 0.77, 0.032], 0.032, 0.03), 0.035);
-    d = smin(d, arm, 0.045);
-    // Leg: hip, knee, ankle, then the foot forward from the heel.
-    let leg = limb(ax, py, pz, [0.094, 0.94, 0], [0.098, 0.5, 0.012], 0.082, 0.052);
-    leg = smin(leg, limb(ax, py, pz, [0.098, 0.5, 0.012], [0.1, 0.09, -0.004], 0.052, 0.036), 0.03);
-    leg = smin(leg, limb(ax, py, pz, [0.1, 0.045, -0.03], [0.104, 0.034, 0.13], 0.04, 0.033), 0.05);
-    return smin(d, leg, 0.05);
-  };
-}
-
 // Four soft faces from the lens (apex) to the screen corners.
 function beamGeometry(apex, corners) {
   const position = [];
