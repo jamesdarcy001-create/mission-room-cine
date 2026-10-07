@@ -186,7 +186,9 @@ async function boot(ui) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     world.time += dt;
-    if (!POSTER_MODE && !reduce) elapsed += dt * CONFIG.speed;
+    // The intro (power on, populate) plays at its own pace; the looping change
+    // sequence after it runs at `speed`.
+    if (!POSTER_MODE && !reduce) elapsed += dt * (elapsed < CONFIG.loop.from ? CONFIG.introSpeed : CONFIG.speed);
     const clock = storyClock(elapsed);
     t = clock.t;
     sampleStory(t, t, story);
@@ -209,15 +211,18 @@ async function boot(ui) {
       world.sampleLights(story);
     }
     const lightBlend = 1 - Math.exp(-dt * 5);
+    // Each screen warms up with a slight swell past full, then settles.
+    const warm = (b) => b * (1 + CONFIG.intro.warmSwell * Math.sin(Math.PI * b));
     world.lights.forEach((light, index) => {
-      light.intensity = CONFIG.room.rectIntensity * story.bg * Math.max(story.power, story.bg);
+      const bg = story.bgEach[index];
+      light.intensity = CONFIG.room.rectIntensity * warm(bg) * Math.max(story.powerEach[index], bg);
       light.color.lerp(world.lightTargets[index], lightBlend);
     });
-    world.screenMats.forEach((mat) => {
-      mat.emissiveIntensity = 1.15 * story.bg;
+    world.screenMats.forEach((mat, i) => {
+      mat.emissiveIntensity = 1.15 * warm(story.bgEach[i === 0 ? 0 : 2]);
     });
-    world.centreMat.opacity = story.bg;
-    world.overlayMat.opacity = story.bg;
+    world.centreMat.opacity = story.bgEach[1];
+    world.overlayMat.opacity = story.bgEach[1];
     updateFrames(world, story);
     updateBeams(world, story);
     updateModel(world, story);
@@ -225,6 +230,10 @@ async function boot(ui) {
     updateCamera(world, story);
     renderModel(world);
     world.renderer.render(world.scene, world.camera);
+    if (!ui.live) {
+      ui.live = true;
+      ui.stage.classList.add("is-live");
+    }
     if (POSTER_MODE) capturePoster(world);
     if (debug) {
       const fps = dt > 0 ? Math.round(1 / dt) : 0;
@@ -517,6 +526,9 @@ function createWorld(stage, coarse) {
   }));
   const lensGeo = trackG(new THREE.CylinderGeometry(0.026, 0.03, 0.012, 32));
   const glows = [];
+  // One of each per projector, so they can power on in turn.
+  const lensMats = [];
+  const glowMats = [];
 
   const moteCount = 42;
   const motePositions = new Float32Array(moteCount * 3);
@@ -606,12 +618,12 @@ function createWorld(stage, coarse) {
       arch.stem.position.y += 0.33;
       arch.mount.updateMatrixWorld(true);
 
-      const lens = new THREE.Mesh(lensGeo, lensMat);
+      const lens = new THREE.Mesh(lensGeo, (lensMats[index] = trackM(lensMat.clone())));
       lens.rotation.x = Math.PI / 2;
       lens.position.z = 0.131;
       arch.mount.add(lens);
       const start = arch.mount.localToWorld(new THREE.Vector3(0, 0, 0.14));
-      const glow = new THREE.Sprite(glowMat);
+      const glow = new THREE.Sprite((glowMats[index] = trackM(glowMat.clone())));
       glow.position.copy(start);
       glow.scale.setScalar(CONFIG.room.glowSize);
       scene.add(glow);
@@ -622,6 +634,7 @@ function createWorld(stage, coarse) {
         .map(([u, v]) => screenPoint(mesh, u, v, 0.03, new THREE.Vector3()));
       beams[index].geometry.dispose();
       beams[index].geometry = trackG(beamGeometry(start, corners));
+      beams[index].material = trackM(beamMat.clone());
       const end = screenPoint(mesh, 0.5, 0.5, 0.03, new THREE.Vector3());
       const dir = end.clone().sub(start);
       const len = dir.length();
@@ -729,9 +742,9 @@ function createWorld(stage, coarse) {
     frames,
     beams,
     beamMat,
-    lensMat,
+    lensMats,
     glows,
-    glowMat,
+    glowMats,
     fitSets,
     motes,
     motePositions,
@@ -802,19 +815,23 @@ function updateFrames(world, story) {
 
 function updateBeams(world, story) {
   const tier = world.tier || CONFIG.quality.tiers[0];
-  const on = story.power * Math.max(story.bg, 0.35 * story.power);
   // Beams are a few additive triangles, so they stay on at every tier; only the motes drop.
-  const opacity = CONFIG.room.beamOpacity * on;
-  world.beamMat.uniforms.uOpacity.value = opacity;
-  world.lensMat.color.set(CONFIG.color.graphite700).lerp(world.tmp.lens.set(CONFIG.color.sand200).multiplyScalar(CONFIG.room.lensBoost), on);
-  world.glowMat.opacity = CONFIG.room.glowOpacity * on;
-  world.glows.forEach((glow) => {
-    glow.visible = on > 0.01;
-  });
-  world.beams.forEach((beam) => {
+  // Each projector powers on in turn: the lens flashes as it strikes, then
+  // the beam fills in with its screen.
+  let anyOn = 0;
+  world.beams.forEach((beam, i) => {
+    const power = story.powerEach[i];
+    const on = power * Math.max(story.bgEach[i], 0.35 * power);
+    const flash = 1 + CONFIG.intro.lensFlash * Math.sin(Math.PI * power) * (1 - story.bgEach[i]);
+    const opacity = CONFIG.room.beamOpacity * on;
+    beam.material.uniforms.uOpacity.value = opacity;
     beam.visible = opacity > 0.001;
+    world.lensMats[i].color.set(CONFIG.color.graphite700).lerp(world.tmp.lens.set(CONFIG.color.sand200).multiplyScalar(CONFIG.room.lensBoost), Math.min(1, power * 1.4));
+    world.glowMats[i].opacity = CONFIG.room.glowOpacity * Math.max(on, power * 0.6) * flash;
+    world.glows[i].visible = power > 0.01;
+    anyOn = Math.max(anyOn, opacity);
   });
-  world.motes.visible = tier.motes && opacity > 0.001;
+  world.motes.visible = tier.motes && anyOn > 0.001;
   if (!world.motes.visible) return;
   const attr = world.motes.geometry.attributes.position;
   world.moteSeeds.forEach((seed, i) => {

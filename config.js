@@ -76,11 +76,14 @@ export const CONFIG = {
     { name: "CONFIRM", start: 10.15, end: 12 },
   ],
   storyEnd: 12,
+  // Seconds between each screen's power-on in the intro (left, centre, right).
+  intro: { stagger: 0.32, warmSwell: 0.3, lensFlash: 0.8 },
   // Auto-play loop (story seconds): after the first full play and a `hold` on
   // the confirmed state, fade back over `fade` and replay from `from`.
   loop: { from: 5.0, hold: 2.2, fade: 1.1 },
   // Playback speed of the story (1 = authored timing).
   speed: 1.45,
+  introSpeed: 1,
   posterTime: 6.4,
 
   room: {
@@ -109,7 +112,7 @@ export const CONFIG = {
     modelTargetHeight: 720,
     maxFps: 60,
     // Canvas pixel scale for the screen images (layout stays at pxWidth).
-    resolution: 0.75,
+    resolution: 1,
   },
 
   schedule: {
@@ -119,13 +122,11 @@ export const CONFIG = {
     // Baseline finish on the forecast chart (fraction of the 16-week axis).
     planFinish: 0.78,
     activities: [
-      { code: "A1010", name: "SITE ESTABLISHMENT", start: 0.02, dur: 0.1, crit: false },
       { code: "A1020", name: "PILING", start: 0.1, dur: 0.16, crit: false },
       { code: "A1030", name: "PILE CAPS", start: 0.24, dur: 0.12, crit: false },
-      { code: "A1040", name: "LEVEL 03 SLAB POUR", start: 0.36, dur: 0.12, crit: true, edit: true },
-      { code: "A1050", name: "LEVEL 03 COLUMNS", start: 0.48, dur: 0.12, crit: true, succ: 0 },
-      { code: "A1060", name: "LEVEL 04 DECK", start: 0.58, dur: 0.14, crit: true, succ: 1 },
-      { code: "A1070", name: "PLATFORM FITOUT", start: 0.52, dur: 0.18, crit: false },
+      { code: "A1040", name: "L03 SLAB POUR", start: 0.36, dur: 0.12, crit: true, edit: true },
+      { code: "A1050", name: "L03 COLUMNS", start: 0.48, dur: 0.12, crit: true, succ: 0 },
+      { code: "A1060", name: "L04 DECK", start: 0.58, dur: 0.14, crit: true, succ: 1 },
       { code: "A1080", name: "COMMISSIONING", start: 0.72, dur: 0.16, crit: true, succ: 2 },
     ],
   },

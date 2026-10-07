@@ -57,6 +57,8 @@ export function createStoryState() {
     elapsed: 0,
     beat: CONFIG.beats[0].name,
     power: 0,
+    powerEach: [0, 0, 0],
+    bgEach: [0, 0, 0],
     frameLinear: 0,
     bg: 0,
     eyebrow: 0,
@@ -96,9 +98,17 @@ export function sampleStory(t, elapsed, s) {
   s.beat = beatAt(t);
   s.quant = Math.floor(t * 24);
 
-  s.power = ease.soft(seg(t, 0.05, 0.05 + D.slow));
+  // Power-on runs left, centre, right: each projector lights, then its beam,
+  // then its screen warms up. `power`/`bg` are the centre screen's values.
+  const stagger = CONFIG.intro.stagger;
+  for (let i = 0; i < 3; i += 1) {
+    const at = i * stagger;
+    s.powerEach[i] = ease.soft(seg(t, 0.05 + at, 0.05 + at + D.slow));
+    s.bgEach[i] = ease.soft(seg(t, 0.4 + at, 0.4 + at + D.cinematic));
+  }
+  s.power = s.powerEach[1];
   s.frameLinear = seg(t, 0, D.cinematic);
-  s.bg = ease.soft(seg(t, 0.35, 0.35 + D.slow));
+  s.bg = s.bgEach[1];
   s.eyebrow = ease.sine(seg(t, 1.55, 1.55 + D.base));
 
   for (let i = 0; i < activities.length; i += 1) {

@@ -7,6 +7,7 @@ const W = CONFIG.screen.pxWidth;
 const H = CONFIG.screen.pxHeight;
 const RES = CONFIG.screen.resolution;
 const C = CONFIG.color;
+const HEAD = 250;
 const F = CONFIG.font;
 
 export const LAYOUT = {
@@ -15,18 +16,19 @@ export const LAYOUT = {
   pad: 80,
   chartLeft: 860,
   chartRight: 1968,
-  chartTop: 268,
-  chartBottom: 1048,
+  chartTop: 340,
+  chartBottom: 1110,
 };
 
 const FONT = {
-  eyebrow: `600 36px ${F.mono}`,
-  title: `500 84px ${F.display}`,
-  name: `500 34px ${F.display}`,
-  mono: `400 24px ${F.mono}`,
-  monoStrong: `600 22px ${F.mono}`,
-  micro: `600 20px ${F.mono}`,
-  legend: `400 22px ${F.mono}`,
+  // Sized for a screen seen ~450 px wide on the page: nothing under ~34 px.
+  eyebrow: `600 54px ${F.mono}`,
+  title: `500 124px ${F.display}`,
+  name: `500 56px ${F.display}`,
+  mono: `500 42px ${F.mono}`,
+  monoStrong: `600 40px ${F.mono}`,
+  micro: `600 34px ${F.mono}`,
+  legend: `600 36px ${F.mono}`,
 };
 
 const FONT5 = {
@@ -99,29 +101,29 @@ function verticalBand(ctx, y, h) {
 
 function header(ctx, eyebrow, title, story, liveLabel) {
   ctx.fillStyle = C.graphite900;
-  ctx.fillRect(0, 0, W, 210);
-  verticalBand(ctx, 0, 210);
+  ctx.fillRect(0, 0, W, HEAD);
+  verticalBand(ctx, 0, HEAD);
   ctx.fillStyle = C.graphite850;
-  ctx.fillRect(0, 210, W, H - 210);
+  ctx.fillRect(0, HEAD, W, H - HEAD);
   setFont(ctx, FONT.eyebrow, C.accent);
   ctx.textAlign = "left";
-  ctx.fillText(scramble(eyebrow, story.eyebrow, story.quant), LAYOUT.pad, 78);
+  ctx.fillText(scramble(eyebrow, story.eyebrow, story.quant), LAYOUT.pad, 70);
   setFont(ctx, FONT.title, C.ivory);
-  ctx.fillText(title, LAYOUT.pad, 148);
-  hairline(ctx, LAYOUT.pad, 196, W - LAYOUT.pad * 2);
-  drawLiveDot(ctx, W - 220, 78, story, liveLabel);
+  ctx.fillText(title, LAYOUT.pad, 168);
+  hairline(ctx, LAYOUT.pad, HEAD - 14, W - LAYOUT.pad * 2);
+  drawLiveDot(ctx, W - 250, 70, story, liveLabel);
 }
 
 function drawLiveDot(ctx, x, y, story, label) {
   ctx.save();
   ctx.fillStyle = C.green500;
   ctx.beginPath();
-  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  ctx.arc(x, y, 12, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
   setFont(ctx, FONT.micro, C.graphite400);
   ctx.textAlign = "left";
-  ctx.fillText(label, x + 22, y);
+  ctx.fillText(label, x + 30, y);
 }
 
 function rowMetrics() {
@@ -158,21 +160,21 @@ function drawCursor(ctx, story) {
   ctx.globalAlpha = Math.min(1, story.cursor);
   ctx.strokeStyle = C.accent;
   ctx.fillStyle = C.accent;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.arc(x, y, 16, 0, Math.PI * 2);
+  ctx.arc(x, y, 28, 0, Math.PI * 2);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(x - 28, y);
-  ctx.lineTo(x - 10, y);
-  ctx.moveTo(x + 10, y);
-  ctx.lineTo(x + 28, y);
-  ctx.moveTo(x, y - 28);
-  ctx.lineTo(x, y - 10);
-  ctx.moveTo(x, y + 10);
-  ctx.lineTo(x, y + 28);
+  ctx.moveTo(x - 48, y);
+  ctx.lineTo(x - 18, y);
+  ctx.moveTo(x + 18, y);
+  ctx.lineTo(x + 48, y);
+  ctx.moveTo(x, y - 48);
+  ctx.lineTo(x, y - 18);
+  ctx.moveTo(x, y + 18);
+  ctx.lineTo(x, y + 48);
   ctx.stroke();
-  ctx.fillRect(x - 2, y - 2, 4, 4);
+  ctx.fillRect(x - 4, y - 4, 8, 8);
   ctx.restore();
 }
 
@@ -182,9 +184,9 @@ function drawGantt(ctx, story, baseline) {
 
   setFont(ctx, FONT.micro, C.graphite400);
   ctx.textAlign = "center";
-  for (let w = 0; w <= CONFIG.schedule.weeks; w += 2) {
+  for (let w = 0; w <= CONFIG.schedule.weeks; w += 4) {
     const x = chartX(w / CONFIG.schedule.weeks);
-    ctx.fillText(`W${String(w).padStart(2, "0")}`, x, LAYOUT.chartTop - 28);
+    ctx.fillText(`W${String(w).padStart(2, "0")}`, x, LAYOUT.chartTop - 40);
     ctx.fillStyle = C.white06;
     ctx.fillRect(x, LAYOUT.chartTop, 2, LAYOUT.chartBottom - LAYOUT.chartTop);
     ctx.fillStyle = C.graphite400;
@@ -194,7 +196,7 @@ function drawGantt(ctx, story, baseline) {
   ctx.fillStyle = C.ivory60;
   ctx.fillRect(dateX, LAYOUT.chartTop - 8, 3, LAYOUT.chartBottom - LAYOUT.chartTop + 8);
   ctx.save();
-  ctx.translate(dateX - 18, (LAYOUT.chartTop + LAYOUT.chartBottom) / 2);
+  ctx.translate(dateX - 28, (LAYOUT.chartTop + LAYOUT.chartBottom) / 2);
   ctx.rotate(-Math.PI / 2);
   setFont(ctx, FONT.micro, C.ivory);
   ctx.textAlign = "center";
@@ -226,13 +228,13 @@ function drawGantt(ctx, story, baseline) {
     const dy = (1 - rise) * 24;
     setFont(ctx, FONT.micro, activity.crit ? C.accent : C.graphite400);
     ctx.textAlign = "left";
-    ctx.fillText(activity.code, LAYOUT.pad, y + rowH * 0.38 + dy);
+    ctx.fillText(activity.code, LAYOUT.pad, y + rowH * 0.5 + dy);
     setFont(ctx, FONT.name, C.ivory);
-    ctx.fillText(activity.name, LAYOUT.pad + 150, y + rowH * 0.62 + dy);
+    ctx.fillText(activity.name, LAYOUT.pad + 150, y + rowH * 0.5 + dy);
 
     const x0 = chartX(bar.start);
     const x1 = chartX(bar.end);
-    const bh = 42;
+    const bh = 66;
     const by = y + (rowH - bh) / 2 + dy;
     if (edited) {
       const ghost = barInterval(story, i, true);
@@ -251,7 +253,7 @@ function drawGantt(ctx, story, baseline) {
 
   ctx.save();
   ctx.strokeStyle = C.graphite500;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 4;
   ctx.lineJoin = "miter";
   activities.forEach((activity, i) => {
     if (activity.succ == null) return;
@@ -265,18 +267,13 @@ function drawGantt(ctx, story, baseline) {
     const x2 = chartX(b.start);
     ctx.beginPath();
     ctx.moveTo(x1, y1);
-    ctx.lineTo(x1 + 18, y1);
-    ctx.lineTo(x1 + 18, y2);
+    ctx.lineTo(x1 + 26, y1);
+    ctx.lineTo(x1 + 26, y2);
     ctx.lineTo(x2, y2);
     ctx.stroke();
   });
   ctx.restore();
 
-  setFont(ctx, FONT.micro, C.graphite400);
-  ctx.textAlign = "left";
-  ctx.fillText("WBS  A1000", LAYOUT.pad, H - 56);
-  ctx.textAlign = "right";
-  ctx.fillText("CALENDAR  5-DAY", W - LAYOUT.pad, H - 56);
 }
 
 // Cumulative progress (0..1) across the 16-week chart (x 0..1).
@@ -310,9 +307,9 @@ function seriesPoint(kind, x, slip) {
 
 function drawCurve(ctx, story, baseline) {
   const x = 96;
-  const y = 250;
+  const y = 290;
   const w = W - 192;
-  const h = 520;
+  const h = 480;
   const slip = baseline ? 0 : story.resequence;
   ctx.fillStyle = C.white04;
   ctx.fillRect(x, y, w, h);
@@ -427,13 +424,13 @@ function drawCurve(ctx, story, baseline) {
     ["FORECAST", C.accent],
   ];
   legend.forEach((item, i) => {
-    const lx = x + 80 + i * 220;
-    const ly = y + 28;
+    const lx = x + 90 + i * 330;
+    const ly = y + 36;
     ctx.fillStyle = item[1];
-    ctx.fillRect(lx, ly - 4, 28, 4);
+    ctx.fillRect(lx, ly - 4, 44, 8);
     setFont(ctx, FONT.legend, C.sand300);
     ctx.textAlign = "left";
-    ctx.fillText(item[0], lx + 40, ly);
+    ctx.fillText(item[0], lx + 58, ly);
   });
 }
 function glyphRows(ch) {
@@ -623,17 +620,17 @@ function paintRight(ctx, story, baseline) {
 function paintOverlay(ctx, story, baseline) {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = C.graphite900;
-  ctx.fillRect(0, 0, W, 210);
-  verticalBand(ctx, 0, 210);
+  ctx.fillRect(0, 0, W, HEAD);
+  verticalBand(ctx, 0, HEAD);
   setFont(ctx, FONT.eyebrow, C.accent);
   ctx.textAlign = "left";
-  ctx.fillText(scramble("4D MODEL", story.eyebrow, story.quant), LAYOUT.pad, 78);
+  ctx.fillText(scramble("4D MODEL", story.eyebrow, story.quant), LAYOUT.pad, 70);
   setFont(ctx, FONT.title, C.ivory);
-  ctx.fillText("Station frame", LAYOUT.pad, 148);
-  hairline(ctx, LAYOUT.pad, 196, W - LAYOUT.pad * 2);
-  drawLiveDot(ctx, W - 280, 78, story, "LIVE");
+  ctx.fillText("Station frame", LAYOUT.pad, 168);
+  hairline(ctx, LAYOUT.pad, HEAD - 14, W - LAYOUT.pad * 2);
+  drawLiveDot(ctx, W - 250, 70, story, "LIVE");
   ctx.fillStyle = C.graphite900;
-  ctx.fillRect(0, H - 260, 760, 260);
+  ctx.fillRect(0, H - 250, 840, 250);
 
   const showTag = !baseline && story.resequence > 0.15 && story.reset < 0.85;
   if (showTag) {
@@ -649,7 +646,9 @@ function paintOverlay(ctx, story, baseline) {
       ctx.arc(x + dx, y + dy, 8, 0, Math.PI * 2);
       ctx.fill();
     });
-    drawPixelString(ctx, "03", x + 70, y + 70, 16, 5, C.ivory);
+    // Centred in the 280 x 220 plate.
+    const tagW = 2 * pixelAdvance(13, 4) - 13 * 1.6;
+    drawPixelString(ctx, "03", x + (280 - tagW) / 2, y + (220 - 7 * 17) / 2, 13, 4, C.ivory);
     ctx.restore();
   }
 
@@ -657,18 +656,17 @@ function paintOverlay(ctx, story, baseline) {
     ["GRID", "5 × 2"],
     ["LEVELS", "04"],
     ["ACTIVITY", showTag ? "A1040" : "A1000"],
-    ["SYSTEM", CONFIG.brandLabel],
   ];
   rows.forEach((row, i) => {
-    const y = H - 220 + i * 42;
+    const y = H - 190 + i * 62;
     setFont(ctx, FONT.micro, C.graphite400);
     ctx.textAlign = "left";
     ctx.fillText(row[0], LAYOUT.pad, y);
     setFont(ctx, FONT.mono, C.ivory);
     ctx.textAlign = "right";
-    ctx.fillText(row[1], 640, y);
+    ctx.fillText(row[1], 760, y);
     ctx.fillStyle = C.graphite700;
-    ctx.fillRect(LAYOUT.pad, y + 16, 560, 2);
+    ctx.fillRect(LAYOUT.pad, y + 26, 680, 3);
   });
 }
 
