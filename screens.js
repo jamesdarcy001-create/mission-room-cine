@@ -105,13 +105,23 @@ function header(ctx, eyebrow, title, story, liveLabel) {
   verticalBand(ctx, 0, HEAD);
   ctx.fillStyle = C.graphite850;
   ctx.fillRect(0, HEAD, W, H - HEAD);
-  setFont(ctx, FONT.eyebrow, C.accent);
-  ctx.textAlign = "left";
-  ctx.fillText(scramble(eyebrow, story.eyebrow, story.quant), LAYOUT.pad, 70);
+  drawEyebrow(ctx, eyebrow, story);
   setFont(ctx, FONT.title, C.ivory);
+  ctx.textAlign = "left";
   ctx.fillText(title, LAYOUT.pad, 168);
   hairline(ctx, LAYOUT.pad, HEAD - 14, W - LAYOUT.pad * 2);
   drawLiveDot(ctx, W - 250, 70, story, liveLabel);
+}
+
+// The red eyebrow over each title fades in with the populate beat.
+function drawEyebrow(ctx, text, story) {
+  if (story.eyebrow <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, story.eyebrow);
+  setFont(ctx, FONT.eyebrow, C.accent);
+  ctx.textAlign = "left";
+  ctx.fillText(text, LAYOUT.pad, 70);
+  ctx.restore();
 }
 
 function drawLiveDot(ctx, x, y, story, label) {
@@ -705,10 +715,9 @@ function paintOverlay(ctx, story, baseline) {
   ctx.fillStyle = C.graphite900;
   ctx.fillRect(0, 0, W, HEAD);
   verticalBand(ctx, 0, HEAD);
-  setFont(ctx, FONT.eyebrow, C.accent);
-  ctx.textAlign = "left";
-  ctx.fillText(scramble("4D MODEL", story.eyebrow, story.quant), LAYOUT.pad, 70);
+  drawEyebrow(ctx, "4D MODEL", story);
   setFont(ctx, FONT.title, C.ivory);
+  ctx.textAlign = "left";
   ctx.fillText("Station frame", LAYOUT.pad, 168);
   hairline(ctx, LAYOUT.pad, HEAD - 14, W - LAYOUT.pad * 2);
   drawLiveDot(ctx, W - 250, 70, story, "LIVE");
@@ -797,9 +806,8 @@ export function paintSurfaces(surfaces, story, only) {
 // every frame.
 export function surfaceKeys(story) {
   const f = (v) => v.toFixed(3);
-  const decoding = story.eyebrow > 0 && story.eyebrow < 1;
   const statusDecoding = story.status > 0 && story.status < 1;
-  const shared = [f(story.eyebrow), decoding ? story.quant : "", f(story.reset), Math.floor(story.dotPhase * 8)];
+  const shared = [f(story.eyebrow), f(story.reset), Math.floor(story.dotPhase * 8)];
   return {
     left: [
       ...shared,

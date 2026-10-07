@@ -994,44 +994,147 @@ function fadeMaterial(trackM, { low, high, glow, fade, gradient, roughness = 0.7
 
 // One seated person from behind: a smooth lathed torso (elliptical, wider than
 // deep) with a neck, and a head. Metres, base at y = 0, facing -Z.
-function bustGeometry(trackG) {
-  const profile = new THREE.SplineCurve([
-    [0.2, 0], [0.212, 0.16], [0.222, 0.29], [0.214, 0.355], [0.186, 0.4],
-    [0.135, 0.43], [0.08, 0.448], [0.056, 0.468], [0.052, 0.53],
-  ].map(([r, y]) => new THREE.Vector2(r, y))).getPoints(48);
-  const torso = new THREE.LatheGeometry(profile, 64);
-  torso.scale(1, 1, 0.56);
-  const head = new THREE.SphereGeometry(0.097, 48, 32);
-  head.scale(0.92, 1.12, 1);
-  head.translate(0, 0.635, 0.008);
-  const merged = mergeGeometries([torso.toNonIndexed(), head.toNonIndexed()]);
-  torso.dispose();
-  head.dispose();
-  merged.computeVertexNormals();
-  return trackG(merged);
+// A flat-shaded, vertex-coloured material for the low-poly workers. Part of
+// each colour is self-lit so their backs read against the dark room, and the
+// alpha fades out on world height like the other audience pieces.
+function workerMaterial(trackM, fade, glow) {
+  const material = trackM(new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    flatShading: true,
+    emissive: 0xffffff,
+    emissiveIntensity: glow,
+    roughness: 0.85,
+    metalness: 0,
+    transparent: true,
+  }));
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uFade = { value: new THREE.Vector2(fade.from, fade.to) };
+    shader.vertexShader = "varying float vFadeY;\n" + shader.vertexShader.replace(
+      "#include <project_vertex>",
+      "#include <project_vertex>\n  vFadeY = (modelMatrix * vec4(transformed, 1.0)).y;",
+    );
+    shader.fragmentShader = "uniform vec2 uFade;\nvarying float vFadeY;\n" + shader.fragmentShader
+      .replace(
+        "#include <color_fragment>",
+        "#include <color_fragment>\n  diffuseColor.a *= smoothstep(uFade.x, uFade.y, vFadeY);",
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vColor.rgb;",
+      );
+  };
+  material.customProgramCacheKey = () => "mrc-worker";
+  return material;
 }
 
-// Five people on the near side of an elliptical table, all facing the screens.
-// The seats follow the table's curve, so the outer people sit a little further
-// back and turn slightly in toward the centre screen.
+// One seated site worker from behind, low-poly and flat-shaded: torso and
+// upper arms in their shirt (short sleeves show forearm skin), an optional
+// hi-vis vest with reflective stripes or overall straps, neck, head, hair and
+// a hard hat. Metres, base at y = 0, facing -Z (the back is +Z).
+function workerGeometry(spec) {
+  const col = (key) => new THREE.Color(CONFIG.color[key]);
+  const parts = [];
+  const add = (geo, key, build) => {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    if (g !== geo) geo.dispose();
+    const m = new THREE.Matrix4();
+    if (build) build(m);
+    g.applyMatrix4(m);
+    const c = col(key);
+    const colors = new Float32Array(g.attributes.position.count * 3);
+    for (let i = 0; i < colors.length; i += 3) {
+      colors[i] = c.r;
+      colors[i + 1] = c.g;
+      colors[i + 2] = c.b;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    g.deleteAttribute("uv");
+    g.deleteAttribute("normal");
+    parts.push(g);
+  };
+  const at = (x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => (m) => {
+    m.compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+  };
+  const lathe = (pts, segs) => new THREE.LatheGeometry(pts.map(([rr, y]) => new THREE.Vector2(rr, y)), segs);
+  const DEPTH = 0.58;
+  const torsoProfile = [[0.19, 0], [0.2, 0.14], [0.215, 0.28], [0.21, 0.35], [0.185, 0.395], [0.13, 0.43], [0.07, 0.445], [0.05, 0.452]];
+  const radiusAt = (y) => {
+    for (let i = 1; i < torsoProfile.length; i += 1) {
+      const [r1, y1] = torsoProfile[i];
+      const [r0, y0] = torsoProfile[i - 1];
+      if (y <= y1) return r0 + ((y - y0) / (y1 - y0)) * (r1 - r0);
+    }
+    return 0.05;
+  };
+  const backZ = (y, lift = 1) => radiusAt(y) * DEPTH * lift;
+
+  // Torso and shoulders.
+  add(lathe(torsoProfile, 10), spec.shirt, at(0, 0, 0, 0, 0, 0, 1, 1, DEPTH));
+
+  // Arms: a shoulder cap, then sleeve and (for short sleeves) forearm skin.
+  [-1, 1].forEach((side) => {
+    add(new THREE.IcosahedronGeometry(0.066, 0), spec.shirt, at(side * 0.205, 0.378, 0));
+    const tilt = side * 0.07;
+    if (spec.shortSleeves) {
+      add(new THREE.CylinderGeometry(0.058, 0.054, 0.14, 7), spec.shirt, at(side * 0.228, 0.32, 0, 0, 0, tilt));
+      add(new THREE.CylinderGeometry(0.046, 0.042, 0.3, 7), spec.skin, at(side * 0.24, 0.12, 0, 0, 0, tilt));
+    } else {
+      add(new THREE.CylinderGeometry(0.056, 0.048, 0.42, 7), spec.shirt, at(side * 0.232, 0.19, 0, 0, 0, tilt));
+    }
+  });
+
+  if (spec.vest) {
+    // Hi-vis vest over the shirt: an orange shell, a reflective hoop low on
+    // the body and two reflective stripes up the back over the shoulders.
+    const vestProfile = torsoProfile.filter(([, y]) => y >= 0.02 && y <= 0.4).map(([rr, y]) => [rr * 1.035, y]);
+    add(lathe(vestProfile, 10), "workerVest", at(0, 0, 0, 0, 0, 0, 1, 1, DEPTH * 1.04));
+    add(new THREE.CylinderGeometry(radiusAt(0.11) * 1.07, radiusAt(0.11) * 1.07, 0.042, 10, 1, true), "workerReflect", at(0, 0.11, 0, 0, 0, 0, 1, 1, DEPTH * 1.1));
+    [-1, 1].forEach((side) => {
+      add(new THREE.BoxGeometry(0.04, 0.24, 0.012), "workerReflect", at(side * 0.088, 0.255, backZ(0.26, 1.035 * 1.04) + 0.008, 0.05, 0, 0));
+    });
+  } else if (spec.overalls) {
+    // Overalls: the bib's back at the waist and two straps crossing up the back.
+    add(new THREE.CylinderGeometry(radiusAt(0.06) * 1.04, radiusAt(0.0) * 1.04, 0.13, 10, 1, true), spec.overalls, at(0, 0.06, 0, 0, 0, 0, 1, 1, DEPTH * 1.05));
+    [-1, 1].forEach((side) => {
+      add(new THREE.BoxGeometry(0.045, 0.34, 0.012), spec.overalls, at(side * 0.002, 0.27, backZ(0.27) + 0.008, 0.04, 0, side * 0.36));
+    });
+  }
+
+  // Neck, head, hair.
+  add(new THREE.CylinderGeometry(0.046, 0.052, 0.12, 7), spec.skin, at(0, 0.49, 0));
+  add(new THREE.IcosahedronGeometry(0.096, 1), spec.skin, at(0, 0.632, 0, 0, 0, 0, 0.92, 1.1, 1));
+  add(new THREE.SphereGeometry(0.1, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.66), spec.hair, at(0, 0.636, 0.008, 0.42, 0, 0, 0.95, 1.08, 1.03));
+  if (spec.longHair) {
+    // A rounded bob that falls to the collar at the back.
+    add(new THREE.IcosahedronGeometry(0.1, 1), spec.hair, at(0, 0.575, 0.045, 0.2, 0, 0, 1.0, 0.95, 0.62));
+  }
+
+  // Hard hat: dome, brim and a raised centre ridge.
+  add(new THREE.SphereGeometry(0.118, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2), "workerHat", at(0, 0.672, 0, 0, 0, 0, 1, 0.84, 1.08));
+  add(new THREE.CylinderGeometry(0.128, 0.134, 0.014, 10), "workerHat", at(0, 0.672, 0, 0, 0, 0, 1, 1, 1.06));
+  add(new THREE.BoxGeometry(0.026, 0.026, 0.22), "workerHat", at(0, 0.672 + 0.118 * 0.84 - 0.008, 0, 0, 0, 0));
+
+  const merged = mergeGeometries(parts);
+  parts.forEach((g) => g.dispose());
+  merged.computeVertexNormals();
+  return merged;
+}
+
+// Five site workers on the near side of an elliptical table, all facing the
+// screens. The seats follow the table's curve, so the outer people sit a
+// little further back and turn slightly in toward the centre screen.
 function createAudience(trackG, trackM) {
-  const { count, spacing, seatGap, baseY, fade, shade } = CONFIG.figures.audience;
+  const { count, spacing, seatGap, baseY, fade, glow, workers } = CONFIG.figures.audience;
   const table = CONFIG.figures.table;
   const root = new THREE.Group();
   const fit = [];
 
-  const bodyMat = fadeMaterial(trackM, {
-    low: shade.low,
-    high: shade.high,
-    glow: shade.glow,
-    fade,
-    gradient: [fade.from, baseY + 0.74],
-  });
-  const bust = bustGeometry(trackG);
+  const bodyMat = workerMaterial(trackM, fade, glow);
   for (let i = 0; i < count; i += 1) {
     const x = (i - (count - 1) / 2) * spacing;
     const edge = table.radiusZ * Math.sqrt(Math.max(0, 1 - (x / table.radiusX) ** 2));
-    const person = new THREE.Mesh(bust, bodyMat);
+    const person = new THREE.Mesh(trackG(workerGeometry(workers[i % workers.length])), bodyMat);
     person.position.set(x, baseY, table.z + edge + seatGap);
     // Face the screens, turned a little in toward the centre. lookAt aims +Z
     // at the target and the bust faces -Z, so aim at the mirrored point.
