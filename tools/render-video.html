@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Video capture</title>
+<link rel="stylesheet" href="/cine.css">
+<style>html,body{margin:0;background:#2b2727} .mrc-cine__debug{display:none!important}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<div class="mrc-cine" style="width:1920px"></div>
+<!-- Render the site video: serve the repo with `node tools/serve.cjs`, open
+     http://localhost:5178/tools/render-video.html?debug&quality=high, then run
+     `await run(213, 639, "frames")` in the console. Frames land in tools/dumps/frames;
+     encode them with the ffmpeg commands in README.md. -->
+<script type="module">
+// Drive the scene frame by frame: hold its animation-frame callback and call it
+// ourselves at exact 1/30 s steps, capturing the canvas after each.
+window.__pending = null;
+window.requestAnimationFrame = (cb) => { window.__pending = cb; return 1; };
+window.cancelAnimationFrame = () => {};
+// Keep rendering if the tab is hidden, and make the motes' random seeds repeatable.
+Object.defineProperty(document, "visibilityState", { get: () => "visible" });
+Object.defineProperty(document, "hidden", { get: () => false });
+let seed = 20261008;
+Math.random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+import { CONFIG } from "/config.js";
+const CYCLE = 7.1;                                   // seconds per story loop (213 frames)
+const LOOP = CYCLE * 3;                              // video length: three loops
+CONFIG.speed = (CONFIG.loop.fade + (CONFIG.storyEnd - CONFIG.loop.from) + CONFIG.loop.hold) / CYCLE;
+CONFIG.model.yawRate = Math.PI / LOOP;               // half a turn per video (the frame is symmetric)
+CONFIG.room.moteSpeed = 1 / LOOP;                    // motes complete one pass per video
+const { mountAll } = await import("/scene.js");
+mountAll();
+let fake = performance.now();
+const step = () => { const cb = window.__pending; if (!cb) throw new Error("scene stopped requesting frames"); window.__pending = null; fake += 1000 / 30; cb(fake); };
+window.ready = () => !!window.__pending && !!window.__mrcWorld;
+window.run = async (pre, count, dir) => {
+  const canvas = document.querySelector(".mrc-cine__stage canvas");
+  for (let i = 0; i < pre; i += 1) step();
+  window.__mrcWorld.time = 0;                       // model and motes start where the poster was taken
+  for (let i = 0; i < count; i += 1) {
+    step();
+    const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+    await fetch(`/save/${dir}/f${String(i).padStart(4, "0")}.png`, { method: "POST", body: blob });
+    window.__done = i + 1;
+  }
+  return [canvas.width, canvas.height];
+};
+</script>
+</body></html>
