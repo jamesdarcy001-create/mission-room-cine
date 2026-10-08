@@ -47,10 +47,12 @@ background, 1600 x 728, 30 fps, 21.3 s = three story cycles, seamless). It sits
 between the poster still and the people layer, loaded by `video.js`:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/jamesdarcy001-create/mission-room-cine@<commit>/video.js" defer></script>
+<div class="mrc-cine" data-video="https://cdn.jsdelivr.net/gh/jamesdarcy001-create/mission-room-cine@<commit>/assets/mission-room.webm">…</div>
+<script src="https://cdn.jsdelivr.net/gh/jamesdarcy001-create/mission-room-cine@<commit>/video.js" defer data-no-optimize="1"></script>
 ```
 
-Safari cannot draw a VP9 video's transparency, and reduced-motion visitors
+Give the box the video URL in `data-video`: LiteSpeed copies scripts into its
+own cache, so the script cannot rely on its own URL. Safari cannot draw a VP9 video's transparency, and reduced-motion visitors
 should not get motion, so both keep the still. `assets/mission-room.mp4` is the
 full composed hero (background and people baked in) for sharing and
 presentations.
