@@ -66,3 +66,11 @@ ffmpeg -framerate 30 -i tools/dumps/frames/f%04d.png -vf "scale=1600:728:flags=l
 ```
 
 Re-capture the poster from the same opening frame so the hand-over stays seamless.
+
+## Flat version
+
+`assets/mission-room-flat.mp4` is the three screens side by side, straight on,
+as one wide frame (3840 x 720, 16:3, 30 fps, the same seamless 21.3 s loop):
+no room, perspective or people. Use it in slides or anywhere the screens
+themselves are the subject. Re-render with `tools/render-flat.html` (run
+`await run(213, 639, "flat")`), then encode the JPEG frames with libx264.

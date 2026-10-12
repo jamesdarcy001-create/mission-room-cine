@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Flat render</title>
+<link rel="stylesheet" href="/cine.css">
+<style>html,body{margin:0;background:#1b1b1b} .mrc-cine__debug{display:none!important}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<div class="mrc-cine" style="width:1280px"></div>
+<!-- Flat render: the three screens side by side, straight on, as one wide frame
+     (3840 x 720, 16:3). Serve the repo with `node tools/serve.cjs`, open
+     http://localhost:5178/tools/render-flat.html?debug&quality=high and run
+     `await run(213, 639, "flat")`. Frames (JPEG) land in tools/dumps/flat. -->
+<script type="module">
+// Drive the scene frame by frame (as in render-video.html), but compose the
+// screens' own images flat instead of capturing the 3D room.
+window.__pending = null;
+window.requestAnimationFrame = (cb) => { window.__pending = cb; return 1; };
+window.cancelAnimationFrame = () => {};
+Object.defineProperty(document, "visibilityState", { get: () => "visible" });
+Object.defineProperty(document, "hidden", { get: () => false });
+let seed = 20261012;
+Math.random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+import * as THREE from "three";
+import { CONFIG } from "/config.js";
+const CYCLE = 7.1;
+const LOOP = CYCLE * 3;
+CONFIG.speed = (CONFIG.loop.fade + (CONFIG.storyEnd - CONFIG.loop.from) + CONFIG.loop.hold) / CYCLE;
+CONFIG.model.yawRate = Math.PI / LOOP;
+const { mountAll } = await import("/scene.js");
+const { editCanvasPoint } = await import("/screens.js");
+mountAll();
+
+// Layout of the wide frame.
+const OUT_W = 3840, OUT_H = 720, GAP = 24;
+const SW = (OUT_W - GAP * 4) / 3;            // screen width (16:9)
+const SH = Math.round(SW * 9 / 16);
+const SX = [GAP, GAP * 2 + SW, GAP * 3 + SW * 2];
+const SY = Math.round((OUT_H - SH) / 2);
+const out = document.createElement("canvas");
+out.width = OUT_W; out.height = OUT_H;
+const ctx = out.getContext("2d");
+ctx.imageSmoothingQuality = "high";
+
+// The centre screen: the model scene rendered flat, at the screens' own size,
+// with its label overlay on top.
+const W = CONFIG.screen.pxWidth, H = CONFIG.screen.pxHeight;
+const flat = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+flat.setPixelRatio(1);
+flat.setSize(W, H, false);
+flat.outputColorSpace = THREE.SRGBColorSpace;
+flat.toneMapping = THREE.NoToneMapping;
+flat.setClearColor(CONFIG.color.graphite850, 1);
+const centre = document.createElement("canvas");
+centre.width = W; centre.height = H;
+const cctx = centre.getContext("2d");
+
+// The change pulse: from the left screen's edited row, across the centre, into
+// the right screen (the same path as in the room).
+function pulseAt(along, v) {
+  const startU = 0.66, endU = 0.78;
+  let d = along * ((1 - startU) + 1 + endU);
+  let i = 0, u = startU;
+  if (d <= 1 - startU) u = startU + d;
+  else { d -= 1 - startU; if (d <= 1) { i = 1; u = d; } else { i = 2; u = Math.min(endU, d - 1); } }
+  return [SX[i] + u * SW, SY + (1 - v) * SH];
+}
+function drawPulse(story) {
+  if (story.pulseOpacity <= 0.02) return;
+  const v = editCanvasPoint(story, false).v;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.fillStyle = CONFIG.color.accent;
+  ctx.shadowColor = CONFIG.color.accent;
+  ctx.shadowBlur = 14;
+  [[0, 1, 0.08], [1, 0.4, 0.066], [2, 0.3, 0.053], [3, 0.2, 0.04]].forEach(([k, a, len]) => {
+    const [x, y] = pulseAt(Math.max(0, story.pulse - k * 0.045), v);
+    ctx.globalAlpha = story.pulseOpacity * a;
+    const w = len * SW, h = Math.max(4, SH * 0.0095);
+    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+  });
+  ctx.restore();
+}
+
+let fake = performance.now();
+const step = () => { const cb = window.__pending; if (!cb) throw new Error("scene stopped requesting frames"); window.__pending = null; fake += 1000 / 30; cb(fake); };
+window.ready = () => !!window.__pending && !!window.__mrcWorld;
+window.run = async (pre, count, dir) => {
+  const w = window.__mrcWorld;
+  for (let i = 0; i < pre; i += 1) step();
+  w.time = 0;
+  for (let i = 0; i < count; i += 1) {
+    step();
+    flat.render(w.model.scene, w.modelCamera);
+    cctx.clearRect(0, 0, W, H);
+    cctx.drawImage(flat.domElement, 0, 0);
+    cctx.drawImage(w.surfaces.overlay.canvas, 0, 0, W, H);
+    ctx.fillStyle = "#1b1b1b";
+    ctx.fillRect(0, 0, OUT_W, OUT_H);
+    [w.surfaces.left.canvas, centre, w.surfaces.right.canvas].forEach((c, k) => ctx.drawImage(c, SX[k], SY, SW, SH));
+    drawPulse(window.__mrcStory);
+    const blob = await new Promise((r) => out.toBlob(r, "image/jpeg", 0.95));
+    await fetch(`/save/${dir}/f${String(i).padStart(4, "0")}.jpg`, { method: "POST", body: blob });
+    window.__done = i + 1;
+  }
+  return [OUT_W, OUT_H];
+};
+</script>
+</body></html>

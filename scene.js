@@ -148,6 +148,7 @@ async function boot(ui) {
   let debug;
   if (DEBUG_MODE) {
     window.__mrcWorld = world;
+    window.__mrcStory = story;
     debug = document.createElement("div");
     debug.className = "mrc-cine__debug";
     const read = document.createElement("p");
